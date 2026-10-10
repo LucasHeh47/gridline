@@ -1,5 +1,6 @@
-# Every push to the develop branch publishes a development build (a GitHub pre-release such as
-# v1.0.3-beta.12). People who turn on Settings → Updates → Developer branch are offered these.
+# Every push to the develop branch publishes a development build: a GitHub pre-release such as
+# v1.0.3-beta.12 (the tag is created together with the release). People who turn on
+# Settings → Updates → Developer branch are offered these.
 name: Development build
 
 on:
@@ -44,12 +45,6 @@ jobs:
           VERSION=$(node scripts/dev-version.mjs ${{ github.run_number }})
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           node scripts/release-notes.mjs
-      - name: Tag the build
-        if: steps.check.outputs.skip != 'true'
-        shell: bash
-        run: |
-          git tag "v$VERSION"
-          git push origin "v$VERSION"
       - name: Build and publish the pre-release
         if: steps.check.outputs.skip != 'true'
         run: npm run release -- --prerelease
