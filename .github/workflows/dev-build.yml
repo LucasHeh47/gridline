@@ -52,7 +52,6 @@ jobs:
           git push origin "v$VERSION"
       - name: Build and publish the pre-release
         if: steps.check.outputs.skip != 'true'
-        run: npm run release
+        run: npm run release -- --prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          EP_PRE_RELEASE: 'true'

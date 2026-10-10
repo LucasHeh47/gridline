@@ -95,7 +95,9 @@ async function check(opts: UpdateCheckOptions): Promise<UpdateState> {
       if (!r || !r.isUpdateAvailable) setState({ status: 'not-available', version: r?.updateInfo.version });
       return state;
     } catch (err) {
-      setState({ status: 'error', error: friendlyError(err) });
+      // No release published yet means there's nothing newer
+      if (isNoRelease(err)) setState({ status: 'not-available', error: undefined });
+      else setState({ status: 'error', error: friendlyError(err) });
       return state;
     } finally {
       checking = null;
@@ -104,11 +106,25 @@ async function check(opts: UpdateCheckOptions): Promise<UpdateState> {
   return checking;
 }
 
+function errorText(err: unknown): string {
+  const e = err as { message?: string; code?: string } | null;
+  return `${e?.code ?? ''} ${e?.message ?? String(err)}`;
+}
+
+/** GitHub has no regular release yet (or none for this channel). */
+function isNoRelease(err: unknown): boolean {
+  return /ERR_UPDATER_LATEST_VERSION_NOT_FOUND|ERR_UPDATER_NO_PUBLISHED_VERSIONS|No published versions|Unable to find latest version/i.test(errorText(err));
+}
+
+/** A short, plain-English reason an update failed (the raw error is too technical to show). */
 function friendlyError(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
-  if (/ENOTFOUND|ERR_INTERNET_DISCONNECTED|ERR_NAME_NOT_RESOLVED|ETIMEDOUT/i.test(msg)) return "Couldn't reach the update server. Check your internet connection.";
-  if (/404/.test(msg)) return 'No releases have been published yet.';
-  return msg.split('\n')[0].slice(0, 200);
+  const msg = errorText(err);
+  if (/ENOTFOUND|ERR_INTERNET_DISCONNECTED|ERR_NAME_NOT_RESOLVED|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ERR_NETWORK/i.test(msg)) return "Couldn't reach GitHub. Check your internet connection and try again.";
+  if (/ERR_UPDATER_CHANNEL_FILE_NOT_FOUND|HttpError: 404/i.test(msg)) return 'The newest version is still being published. Try again in a few minutes.';
+  if (/sha512|checksum/i.test(msg)) return 'The download was damaged. Try again.';
+  if (/(HttpError:|HTTP) (403|429)|rate limit/i.test(msg)) return 'GitHub is limiting requests right now. Try again later.';
+  if (/ENOSPC/i.test(msg)) return "There isn't enough disk space to download the update.";
+  return 'Something went wrong while checking for updates. Try again later.';
 }
 
 export function setupUpdates(): void {

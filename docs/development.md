@@ -20,7 +20,7 @@ npm install
 | `npm run typecheck` | Type-checks the app and the Electron code |
 | `npm run build` | Builds `dist/` (UI) and `dist-electron/` (main + preload) |
 | `npm run dist` | Builds the Windows installer and portable exe into `release/` |
-| `npm run release` | Builds and publishes a GitHub release (needs `GH_TOKEN`, normally done by CI) |
+| `npm run release` | Builds, then publishes one GitHub release with the [GitHub CLI](https://cli.github.com/) (needs `GH_TOKEN`; normally done by CI) |
 
 ## Project layout
 
@@ -58,7 +58,7 @@ Development builds are numbered automatically: with `main` at `1.0.2`, builds fr
 
 ## Releasing a new version
 
-1. On `develop`, set `version` in `package.json` (for example `1.0.3`) and add a `## 1.0.3` section at the top of `CHANGELOG.md`. Users see that section as "What's new" in the app and in the GitHub release.
+1. On `develop`, set `version` in `package.json` (for example `1.0.3`) and rename the `## Unreleased` section at the top of `CHANGELOG.md` to `## 1.0.3`. Users see that section as "What's new" in the app and in the GitHub release.
 2. Commit, then merge into `main` and tag it:
    ```
    git checkout main

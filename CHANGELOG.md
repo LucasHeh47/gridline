@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Clearer messages when checking for updates fails (for example, no internet connection).
+- Releases are now published in a single step, so each version appears exactly once on GitHub.
+
 ## 1.0.2
 
 - **Home page.** Gridline now opens to a Home page where you can start a blank workbook, pick a preset, or reopen a recent file. Pin the files you use most and search the list. The **File** tab (Ctrl+Shift+H) brings you back to it any time, together with Save, Save as and Export.
