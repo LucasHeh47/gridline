@@ -33,6 +33,7 @@ export class Updates {
 
   /** Called once the window is ready. */
   async startup(): Promise<void> {
+    this.started = true;
     const current = await platform.appVersion();
     let last: string | null = null;
     try {
@@ -54,12 +55,23 @@ export class Updates {
     if (isDesktop && this.app.settings.bool('updates.onStartup')) setTimeout(() => void this.check(true), 4000);
   }
 
+  /** Turning on the Developer branch checks right away. */
+  devBranchChanged(on: boolean): void {
+    if (!this.started) return;
+    if (on) {
+      toast("Developer branch is on. Checking for a development build…");
+      void this.check(false);
+    } else toast("Developer branch is off. You'll stay on this version until the next regular release.");
+  }
+
+  private started = false;
+
   async check(silent: boolean): Promise<void> {
     this.manual = !silent;
     if (!silent) this.app.statusbar.flash('Checking for updates…');
     const s = await platform.updates.check({
       silent,
-      allowPrerelease: this.app.settings.str('updates.channel') === 'beta',
+      allowPrerelease: this.app.settings.bool('updates.devBranch'),
       autoDownload: this.app.settings.bool('updates.autoDownload'),
     });
     this.onState(s);

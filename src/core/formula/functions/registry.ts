@@ -10,7 +10,8 @@ export type Category =
   | 'Information'
   | 'Financial'
   | 'Personal finance'
-  | 'NFL';
+  | 'NFL'
+  | 'World';
 
 export interface FnDef {
   name: string;
@@ -41,7 +42,7 @@ export interface FnDef {
   fn: (ctx: Ctx, args: Arg[]) => Value;
 }
 
-export type SuggestKind = 'nflPlayerStat' | 'nflTeamStat' | 'nflTeam' | 'nflPlayer' | 'nflGameField' | 'nflInfoField' | 'nflSeasonType' | 'nflGroup' | 'stockField' | 'currency' | 'interval';
+export type SuggestKind = 'nflPlayerStat' | 'nflTeamStat' | 'nflTeam' | 'nflPlayer' | 'nflGameField' | 'nflInfoField' | 'nflSeasonType' | 'nflGroup' | 'stockField' | 'currency' | 'interval' | 'weatherField' | 'countryField';
 
 export const FUNCTIONS = new Map<string, FnDef>();
 

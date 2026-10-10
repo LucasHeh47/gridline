@@ -4,7 +4,7 @@ import type { App } from '../app';
 import { h } from '../dom';
 import type { PanelContent } from './SidePanel';
 
-const CATS: (Category | 'All')[] = ['All', 'NFL', 'Personal finance', 'Math', 'Statistical', 'Lookup', 'Text', 'Logical', 'Date & time', 'Financial', 'Information'];
+const CATS: (Category | 'All')[] = ['All', 'Personal finance', 'NFL', 'World', 'Math', 'Statistical', 'Lookup', 'Text', 'Logical', 'Date & time', 'Financial', 'Information'];
 
 export class FunctionsPanel implements PanelContent {
   title = 'Functions';

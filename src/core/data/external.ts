@@ -46,6 +46,8 @@ export class ExternalData {
   private activity = new Set<(pending: number) => void>();
   private notifyTimer: ReturnType<typeof setTimeout> | null = null;
   fetcher: Fetcher | null = null;
+  /** While above zero, nothing new is downloaded (used to build previews). */
+  paused = 0;
   /** Set to force the next requests to bypass caches (Refresh live data). */
   private forceUntil = 0;
 
@@ -89,6 +91,7 @@ export class ExternalData {
       return { ok: false, error: e.notFound ? notFound(res.label, e.error) : new ErrorValue('#CONNECT!', `Couldn't download ${res.label}: ${e.error}`) };
     }
     if (!this.fetcher) return { ok: false, error: new ErrorValue('#CONNECT!', 'Live data isn\'t available in this window.') };
+    if (this.paused > 0) return { ok: false, error: busy(res.label) };
     this.load(res);
     return { ok: false, error: busy(res.label) };
   }

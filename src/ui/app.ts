@@ -39,7 +39,7 @@ import { Ribbon } from './ribbon';
 import { SETTINGS } from './settings/schema';
 import { Settings, type Refresh } from './settings/store';
 import { SettingsView } from './settings/SettingsView';
-import { pickTemplate } from './templatePicker';
+import { HomeView, type HomeSection } from './home';
 import { TitleBar } from './titleBar';
 import { Updates } from './updates';
 import { dialog, hideTooltip, toast, type MenuItem } from './widgets';
@@ -132,6 +132,7 @@ export class App {
   readonly root: HTMLElement;
   private explainerEl: HTMLDivElement;
   private settingsView: SettingsView | null = null;
+  private homeView: HomeView | null = null;
   private timers: ReturnType<typeof setInterval>[] = [];
   private systemDark = window.matchMedia?.('(prefers-color-scheme: dark)');
 
@@ -141,6 +142,11 @@ export class App {
     this.settings = new Settings(SETTINGS);
     if (saved.theme === 'light' && !this.settings.isModified('appearance.theme')) this.settings.set('appearance.theme', 'light');
     if (saved.adaptColors === false && !this.settings.isModified('appearance.adaptColors')) this.settings.set('appearance.adaptColors', false);
+    // 1.0.1 → 1.0.2: the beta channel became the Developer branch; "Money & NFL" became "Live Data"
+    if (this.settings.raw('updates.channel') === 'beta' && !this.settings.isModified('updates.devBranch')) this.settings.set('updates.devBranch', true);
+    this.settings.drop('updates.channel');
+    const tabs = this.settings.raw('ribbon.tabs');
+    if (Array.isArray(tabs) && tabs.includes('mine')) this.settings.set('ribbon.tabs', [...tabs.filter((t) => t !== 'mine'), 'live']);
     this.prefs = { recentCommands: saved.recentCommands, showFormulaBarExpanded: saved.showFormulaBarExpanded };
     for (const d of this.settings.defs) d.apply?.(this.settings.get(d.id) as never, this);
     this.applyTheme();
@@ -1271,6 +1277,25 @@ export class App {
 
   // ---------- files ----------
 
+  /** True for an untouched, never-saved workbook (it can be replaced without asking). */
+  isPristineDoc(): boolean {
+    return this.isPristine();
+  }
+
+  /** The Home page: new workbook, presets, recent files and file actions. */
+  openHome(section: HomeSection = 'home'): void {
+    if (this.isEditing && !this.commitEdit()) return;
+    if (this.homeView) {
+      this.homeView.show(section);
+      return;
+    }
+    this.homeView = new HomeView(this, section, () => {
+      this.homeView = null;
+      this.focusGrid();
+    });
+    this.root.append(this.homeView.el);
+  }
+
   private isPristine(): boolean {
     return !this.doc.dirty && !this.doc.filePath && this.doc.wb.sheets.length === 1 && this.doc.wb.sheets[0].cells.size === 0;
   }
@@ -1287,7 +1312,7 @@ export class App {
       // The first window when Gridline starts: blank, template gallery, or the last file
       if (params.get('launch') !== '1') return;
       const start = this.settings.str('files.startup');
-      if (start === 'templates') void this.newFromTemplate();
+      if (start === 'home') this.openHome('home');
       else if (start === 'last') {
         const last = (await platform.recentFiles())[0];
         if (last) await this.openRecent(last.path);
@@ -1311,10 +1336,13 @@ export class App {
     this.loadWorkbook(new Workbook(), null, 'Untitled', null);
   }
 
-  /** File → New from template. Opens in this window when it's empty, otherwise in a new one. */
+  /** Starts a preset. Opens in this window when it's empty, otherwise in a new one. Without an id, shows the presets. */
   async newFromTemplate(id?: string): Promise<void> {
-    const pick = id ?? (await pickTemplate());
-    if (!pick) return;
+    if (!id) {
+      this.openHome('new');
+      return;
+    }
+    const pick = id;
     if (!this.isPristine()) {
       if (isDesktop) {
         platform.newWindow(undefined, pick);
@@ -1328,10 +1356,10 @@ export class App {
   private loadTemplate(id: string): void {
     const info = TEMPLATES.find((t) => t.id === id);
     const scoring = { ppr: 'Fantasy Points PPR', half: 'Fantasy Points Half PPR', standard: 'Fantasy Points' }[this.settings.str('nfl.fantasy')];
-    const wb = buildTemplate(id, { team: this.settings.str('nfl.team'), fantasyStat: scoring });
+    const wb = buildTemplate(id, { team: this.settings.str('nfl.team'), fantasyStat: scoring, currency: this.settings.str('live.currency') });
     if (!info || !wb) return;
     this.loadWorkbook(wb, null, info.name, null);
-    this.statusbar.flash(`New ${info.name.toLowerCase()} — the yellow cells are yours to change`);
+    this.statusbar.flash(`New ${info.name.toLowerCase()} — change the yellow cells to make it yours`);
   }
 
   async openFile(): Promise<void> {

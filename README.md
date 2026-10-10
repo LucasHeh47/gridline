@@ -1,69 +1,67 @@
 # Gridline
 
-A dark-mode desktop spreadsheet (Electron + TypeScript) that opens and saves **.xlsx**, **.csv** and **.tsv** files.
+**A free, fast, dark-mode spreadsheet for Windows.** It opens and saves Excel (`.xlsx`) and CSV files, has 250+ formulas, and can pull live data into your sheets: stock and crypto prices, exchange rates, NFL stats, weather and more.
 
-## Run
+![The Gridline Home page](docs/images/home.png)
 
-```
-npm install
-npm run dev      # app with hot reload
-npm start        # production build, then launch
-npm test         # 86 engine / file-format / NFL / finance / formatting tests
-npm run dist     # Windows installer + portable exe in release/
-npm run release  # build and publish a GitHub release (needs GH_TOKEN)
-```
+## Download and install
 
-## Highlights
+1. Go to the **[latest release](https://github.com/LucasHeh47/gridline/releases/latest)**.
+2. Under **Assets**, download one of these files:
 
-- 250+ functions (XLOOKUP, FILTER, SORT, UNIQUE, LET, SUMIFS, financial, date, text…) with dynamic-array spilling.
-- Errors explain themselves in plain English, point to the cell that caused them, and offer one-click fixes.
-- A ribbon with plain-English tabs (Home, Insert, Formulas, Data, View, Money & NFL, Help). Drag its bottom edge, or double-click a tab, to switch between full, compact and tabs-only. **Ctrl+K** searches every command, cell, sheet and function.
-- **Settings** (click the Gridline logo, or Ctrl+,): 125 options in 13 sections, with search, export and import.
-- **Advanced format** (Home tab, Ctrl+Alt+F): detects headers, totals, dates, money, percentages, years and IDs and formats the whole table in one step. You can keep it, try another style, or revert.
-- Formula editing: colored references, click/drag to insert ranges, autocomplete, argument hints, F4 for `$`.
-- Formatting, borders, merges, number formats with live previews, conditional formatting, sort, filter, freeze panes, and native Excel charts.
-- Leading zeros and long ID numbers stay as text; CSV export keeps full precision.
+   | File | What it is |
+   | --- | --- |
+   | **`Gridline-Setup-x.y.z.exe`** | **The installer (recommended).** It adds Gridline to the Start menu and the desktop, opens `.xlsx` and `.csv` files with a double-click, and updates itself. |
+   | `Gridline-Portable-x.y.z.exe` | A single file you can run from anywhere (for example a USB stick) without installing. It doesn't update itself; it tells you when a new version is available. |
 
-## NFL data
+3. Run the file you downloaded.
 
-Functions that start with `NFL.` pull stats from [nflverse](https://github.com/nflverse) (1999 to today). Files download once and are cached on disk, so they keep working offline. **Ctrl+Alt+F5** refreshes them.
+> **"Windows protected your PC"?** Gridline isn't signed with a paid code-signing certificate yet, so Windows SmartScreen may warn you the first time. Click **More info**, then **Run anyway**. You can confirm the file is genuine by downloading it only from this repository's Releases page.
 
-| Function | What it returns |
-| --- | --- |
-| `NFL.PLAYER(player, stat, [season], [week], [season_type])` | One stat, e.g. `=NFL.PLAYER("Josh Allen", "Passing TDs", 2024)` |
-| `NFL.PLAYERSTATS(player, stats, [first], [last])` | A season-by-season table, e.g. `=NFL.PLAYERSTATS("Tom Brady", "Passing TDs, Rushing TDs, Passing Yards", 2015, 2020)` |
-| `NFL.GAMELOG(player, [season])` | Week-by-week stats |
-| `NFL.TEAM(team, stat, [season], [week])` | Record, points, yards, "… Allowed" stats |
-| `NFL.GAME(team, season, week, [field])` | Result, score, spread, over/under… |
-| `NFL.SCHEDULE`, `NFL.STANDINGS`, `NFL.LEADERS`, `NFL.ROSTER`, `NFL.PLAYERINFO`, `NFL.TEAMS`, `NFL.STATS` | Tables |
+**Requirements:** Windows 10 or 11 (64-bit). macOS and Linux builds aren't available yet.
 
-How fill works with these functions:
-- Arguments can be ranges. `=NFL.PLAYER("Tom Brady", B1:D1, A2:A7)` fills a seasons × stats grid.
-- Dragging a formula down with a typed season (or week) counts it up: 2015 becomes 2016, 2017 and so on.
-- **Insert → NFL data** (or Ctrl+K → "NFL data") builds these grids for you.
-- While typing, stat names, teams and players autocomplete inside the quotes.
+## What it does
 
-## Money
+- **Opens and saves Excel and CSV files.** Formulas, formatting, merged cells, conditional formatting, charts, frozen panes and filters are kept.
+- **250+ functions** (XLOOKUP, FILTER, SORT, UNIQUE, LET, SUMIFS, financial, date and text functions…) with dynamic arrays that spill into neighboring cells.
+- **Errors in plain English.** A cell with an error explains what went wrong, points to the cell that caused it, and often offers a one-click fix.
+- **A ribbon that stays out of the way.** Tabs with clearly labelled groups. Drag the ribbon's bottom edge to make it smaller, or press **Ctrl+K** to search every command.
+- **Advanced format.** Select a table and Gridline formats it for you: header, dates, money, percentages, totals, column widths. You can keep it, try another style, or undo it in one click.
+- **Live data:**
+  - **Finance:** stock quotes and history, crypto prices, exchange rates.
+  - **Sports:** NFL player and team stats, schedules, standings and leaders, back to 1999.
+  - **World:** weather and forecasts, public holidays, country statistics.
+- **10 ready-made presets.** Monthly budget, loan calculator, debt payoff, net worth, stock portfolio, crypto portfolio, NFL team tracker, fantasy football, trip planner and project tracker.
+- **125 settings.** Theme, accent color, ribbon size, what Enter does, date format, AutoSave, CSV options and more.
 
-- **Loans:** `AMORTIZATION`, `LOANBALANCE`, `PAYOFFMONTHS`, `PAYOFFINTEREST`.
-- **Debt:** `DEBTPAYOFF` (avalanche / snowball).
-- **Saving:** `SAVINGSGOAL`, `SAVINGS.PROJECTION`, `CAGR`.
-- **Live prices:** `STOCK`, `STOCKHISTORY`, `CRYPTO`, `FXRATE`, `FX`.
+![A monthly budget in Gridline](docs/images/budget.png)
 
-**File → New from template** has starter workbooks: monthly budget, loan and mortgage planner, debt payoff, net worth and savings, investment portfolio, and an NFL season tracker (schedule, standings, QB comparison, weekly fantasy points).
+![Live NFL data](docs/images/nfl.png)
 
-Gridline-only functions (NFL, STOCK…) are saved into .xlsx files along with their last values. Excel doesn't have these functions, so it may show `#NAME?` in those cells if it recalculates the file.
+## Learn more
 
-## Versions and updates
+- **[User guide](docs/user-guide.md)**: everything from the basics to live data, settings and shortcuts.
+- **[Function reference](docs/functions.md)**: Gridline's own functions (live data and personal finance), with examples.
+- **[What's new](CHANGELOG.md)**: changes in each version.
 
-Every change ships as a new version (1.0.1, 1.0.2…), recorded in [CHANGELOG.md](CHANGELOG.md). Installed copies check GitHub Releases when they start and ask before updating. You can turn this off in Settings → Updates. The portable exe can't replace itself, so it opens the download page instead.
+## Updates
 
-To publish a release:
+The installed app checks for new versions when it starts and asks before installing anything. You can turn this off in **Settings → Updates**.
 
-1. Bump `version` in `package.json` and add a section to `CHANGELOG.md`.
-2. Commit, then tag and push: `git tag v1.0.2 && git push origin main --tags`.
-3. The **Release** GitHub Action builds the installer and publishes it, along with `latest.yml`, which installed copies read.
+**Developer branch:** to try new features before they're released, turn on **Settings → Updates → Developer branch**. You'll get development builds, which are built automatically from the `develop` branch and may have bugs. Turn it off again to go back to regular releases at the next update.
 
-You can also publish from this computer with `npm run release`. Set `GH_TOKEN` to a GitHub token with access to the repository first.
+## Privacy
 
-To test the update prompt without publishing, serve a folder containing `latest.yml` and the installer locally, then start the packaged app with `GRIDLINE_UPDATE_FEED=http://127.0.0.1:8123/`. Only localhost addresses are accepted.
+- Gridline doesn't collect analytics or send your spreadsheets anywhere. There is no account to create.
+- It only goes online in two cases:
+  - **Live data.** When a formula asks for it, Gridline downloads that data and keeps a copy on your computer. Sources: [nflverse](https://github.com/nflverse) (NFL), Yahoo Finance (stocks), Coinbase (crypto), Frankfurter (exchange rates), Open-Meteo (weather), Nager.Date (holidays) and the World Bank (country data).
+  - **Update checks** against this repository's GitHub Releases.
+- You can turn live data off, or use only data you've already downloaded, in **Settings → Live data**.
+
+## Building from source
+
+See **[docs/development.md](docs/development.md)** for building, testing, the branch layout and how releases are published.
+
+## License
+
+[MIT](LICENSE)

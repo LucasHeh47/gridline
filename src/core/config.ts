@@ -22,6 +22,8 @@ export interface CoreConfig {
   nflCurrentSeasonHours: number;
   /** How long a stock or crypto quote is reused (seconds). */
   quoteMaxAgeSec: number;
+  /** Units for WEATHER: °F, mph, inches (imperial) or °C, km/h, mm (metric). */
+  units: 'imperial' | 'metric';
   csv: {
     delimiter: ',' | ';' | '\t' | '|';
     /** Write a UTF-8 byte order mark (helps Excel read accented characters). */
@@ -45,5 +47,6 @@ export const config: CoreConfig = {
   defaultCurrency: 'USD',
   nflCurrentSeasonHours: 3,
   quoteMaxAgeSec: 120,
+  units: 'imperial',
   csv: { delimiter: ',', bom: true, lineEnding: '\r\n', dates: 'display', detectTypes: true },
 };

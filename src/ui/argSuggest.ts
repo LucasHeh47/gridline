@@ -6,6 +6,7 @@ import { TEAMS, teamName } from '../core/data/nflTeams';
 import type { SuggestKind } from '../core/formula/functions';
 import { NFL_GAME_FIELDS, NFL_INFO_FIELDS } from '../core/formula/functions/nfl';
 import { STOCK_FIELDS } from '../core/formula/functions/money';
+import { COUNTRY_FIELDS, WEATHER_FIELDS } from '../core/formula/functions/world';
 
 export interface ArgSuggestion {
   value: string;
@@ -97,6 +98,12 @@ export function argSuggestions(kind: SuggestKind, partial: string): ArgSuggestio
       break;
     case 'interval':
       all = ['daily', 'weekly', 'monthly'].map((v) => ({ value: v, desc: '', kind: 'Interval' }));
+      break;
+    case 'weatherField':
+      all = WEATHER_FIELDS.map((f) => ({ value: f, desc: '', kind: 'Weather' }));
+      break;
+    case 'countryField':
+      all = COUNTRY_FIELDS.map((f) => ({ value: f, desc: '', kind: 'Country' }));
       break;
   }
   if (!q) return all.slice(0, 60);

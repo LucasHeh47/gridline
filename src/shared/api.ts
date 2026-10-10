@@ -10,6 +10,7 @@ export interface RecentFile {
   path: string;
   name: string;
   openedAt: number;
+  pinned?: boolean;
 }
 
 export type SaveKind = 'xlsx' | 'csv' | 'tsv' | 'json';
@@ -29,6 +30,8 @@ export interface GridlineApi {
   saveFile(path: string, data: Uint8Array): Promise<SaveResult>;
   recentFiles(): Promise<RecentFile[]>;
   clearRecentFiles(): Promise<void>;
+  removeRecentFile(path: string): Promise<void>;
+  pinRecentFile(path: string, pinned: boolean): Promise<void>;
   readClipboard(): Promise<{ text: string; html: string }>;
   writeClipboard(data: { text: string; html?: string }): Promise<void>;
   setTitle(title: string): void;

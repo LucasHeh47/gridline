@@ -243,7 +243,8 @@ function renderCartesian(svg: SVGSVGElement, chart: ChartDef, data: ResolvedChar
   let left = l + (horizontal ? catLabelW : valLabelW) + (chart.yTitle ? 18 : 0);
   let bottom = b - 20 - (chart.xTitle ? 18 : 0);
   const top = t0 + 6;
-  const right = r - 6;
+  // Horizontal charts put value labels under the plot; keep room for half of the last one
+  const right = r - 6 - (horizontal ? Math.max(0, measure(valLabels[valLabels.length - 1] ?? '', fs) / 2 - 4) : 0);
   if (horizontal) bottom = b - 20 - (chart.xTitle ? 18 : 0);
   if (left > right - 40) left = right - 40;
 

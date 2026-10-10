@@ -38,7 +38,7 @@ describe('templates', () => {
       expect(wb, t.id).not.toBeNull();
       const doc = new Doc(wb!);
       await settle();
-      const live = t.id === 'portfolio' || t.id === 'nfl';
+      const live = !!t.live;
       expect(errors(doc, live), t.id).toEqual([]);
       doc.dispose();
     }

@@ -100,6 +100,7 @@ export class TitleBar {
         cmd('help.updates', 'Check for updates…'),
         cmd('help.whatsNew', "What's new"),
         { separator: true },
+        cmd('file.home', 'Home'),
         cmd('file.newWindow', 'New window'),
         cmd('help.shortcuts'),
         cmd('help.functions'),
@@ -109,45 +110,4 @@ export class TitleBar {
       anchor,
     );
   }
-
-  async openFileMenu(anchor: HTMLElement): Promise<void> {
-    const app = this.app;
-    const recent = (await platform.recentFiles()).slice(0, app.settings.num('files.recentCount'));
-    const cmd = (id: string, label?: string): MenuItem => {
-      const c = app.commands.get(id)!;
-      return { label: label ?? c.title, icon: c.icon, hint: c.keys?.[0], disabled: c.enabled ? !c.enabled() : false, run: () => app.commands.run(id) };
-    };
-    const items: MenuItem[] = [
-      cmd('file.new'),
-      cmd('file.template'),
-      cmd('file.open'),
-      {
-        label: 'Open recent',
-        icon: L.History,
-        disabled: !recent.length,
-        submenu: () => [
-          ...recent.map((r) => ({ label: r.name, hint: shortPath(r.path), icon: L.FileSpreadsheet, run: () => app.openRecent(r.path) })),
-          { separator: true as const },
-          { label: 'Clear recent files', icon: L.Trash2, run: () => platform.clearRecentFiles() },
-        ],
-      },
-      { separator: true },
-      cmd('file.save'),
-      cmd('file.saveAs'),
-      cmd('file.exportCsv'),
-      cmd('file.exportTsv'),
-      { separator: true },
-      cmd('file.showInFolder'),
-      { separator: true },
-      cmd('app.settings', 'Settings'),
-      cmd('help.about'),
-    ];
-    showMenu(items, anchor);
-  }
-}
-
-function shortPath(p: string): string {
-  const parts = p.split(/[\\/]/);
-  if (parts.length <= 3) return p;
-  return '…\\' + parts.slice(-3, -1).join('\\');
 }

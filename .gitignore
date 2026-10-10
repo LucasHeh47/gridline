@@ -4,3 +4,4 @@ dist-electron/
 release/
 .claude/
 *.log
+build/release-notes.md

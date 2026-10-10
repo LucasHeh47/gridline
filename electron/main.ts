@@ -32,6 +32,7 @@ interface Recent {
   path: string;
   name: string;
   openedAt: number;
+  pinned?: boolean;
 }
 
 async function readRecent(): Promise<Recent[]> {
@@ -43,11 +44,20 @@ async function readRecent(): Promise<Recent[]> {
   }
 }
 
-async function addRecent(p: string): Promise<void> {
-  const list = (await readRecent()).filter((r) => r.path.toLowerCase() !== p.toLowerCase());
-  list.unshift({ path: p, name: path.basename(p), openedAt: Date.now() });
+async function writeRecent(list: Recent[]): Promise<void> {
+  // Keep every pinned file plus the 30 most recent others
+  let unpinned = 0;
+  const kept = list.filter((r) => r.pinned || unpinned++ < 30);
   await fs.mkdir(app.getPath('userData'), { recursive: true });
-  await fs.writeFile(recentPath(), JSON.stringify(list.slice(0, 30), null, 2));
+  await fs.writeFile(recentPath(), JSON.stringify(kept, null, 2));
+}
+
+async function addRecent(p: string): Promise<void> {
+  const all = await readRecent();
+  const prev = all.find((r) => r.path.toLowerCase() === p.toLowerCase());
+  const list = all.filter((r) => r !== prev);
+  list.unshift({ path: p, name: path.basename(p), openedAt: Date.now(), pinned: prev?.pinned || undefined });
+  await writeRecent(list);
   app.addRecentDocument(p);
 }
 
@@ -203,8 +213,21 @@ ipcMain.handle('file:recent', async () => {
 });
 
 ipcMain.handle('file:clear-recent', async () => {
-  await fs.writeFile(recentPath(), '[]').catch(() => undefined);
+  // Pinned files stay
+  await writeRecent((await readRecent()).filter((r) => r.pinned)).catch(() => undefined);
   app.clearRecentDocuments();
+});
+
+ipcMain.handle('file:remove-recent', async (_e, p: string) => {
+  if (typeof p !== 'string') return;
+  await writeRecent((await readRecent()).filter((r) => r.path.toLowerCase() !== p.toLowerCase()));
+});
+
+ipcMain.handle('file:pin-recent', async (_e, p: string, pinned: boolean) => {
+  if (typeof p !== 'string') return;
+  const list = await readRecent();
+  for (const r of list) if (r.path.toLowerCase() === p.toLowerCase()) r.pinned = pinned ? true : undefined;
+  await writeRecent(list);
 });
 
 ipcMain.handle('clipboard:read', async () => {
@@ -263,7 +286,18 @@ ipcMain.handle('app:version', () => app.getVersion());
 // ---------- live data (NFL stats, prices, exchange rates) ----------
 
 /** Only these sites can be contacted, and only over HTTPS. */
-const DATA_HOSTS = new Set(['github.com', 'raw.githubusercontent.com', 'api.frankfurter.dev', 'api.coinbase.com', 'query1.finance.yahoo.com', 'query2.finance.yahoo.com']);
+const DATA_HOSTS = new Set([
+  'github.com',
+  'raw.githubusercontent.com',
+  'api.frankfurter.dev',
+  'api.coinbase.com',
+  'query1.finance.yahoo.com',
+  'query2.finance.yahoo.com',
+  'api.open-meteo.com',
+  'geocoding-api.open-meteo.com',
+  'date.nager.at',
+  'api.worldbank.org',
+]);
 const cacheDir = () => path.join(app.getPath('userData'), 'data-cache');
 
 ipcMain.handle('net:fetch', async (_e, url: string, opts: { maxAgeSec?: number; headers?: Record<string, string>; offline?: boolean }) => {

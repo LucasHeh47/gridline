@@ -142,6 +142,18 @@ export class Settings {
     this.emit(id);
   }
 
+  /** A stored value as saved, even for settings that no longer exist (for migrations). */
+  raw(id: string): SettingValue | undefined {
+    return this.values[id];
+  }
+
+  /** Forgets a stored value that no longer has a setting. */
+  drop(id: string): void {
+    if (!(id in this.values) || this.byId.has(id)) return;
+    delete this.values[id];
+    this.save();
+  }
+
   isModified(id: string): boolean {
     return id in this.values;
   }

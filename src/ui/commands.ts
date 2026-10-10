@@ -122,7 +122,8 @@ export class Commands {
 
     // ---------- File ----------
     a({ id: 'file.new', title: 'New workbook', category: 'File', keys: ['Ctrl+N'], icon: L.FilePlus, global: true, run: () => app.newWorkbook() });
-    a({ id: 'file.template', title: 'New from template…', category: 'File', icon: L.LayoutTemplate, keywords: 'budget loan mortgage debt savings net worth portfolio stocks nfl fantasy football tracker', global: true, run: () => app.newFromTemplate() });
+    a({ id: 'file.home', title: 'Home — recent files and presets', category: 'File', keys: ['Ctrl+Shift+H'], icon: L.House, keywords: 'start page recent backstage file', global: true, run: () => app.openHome('home') });
+    a({ id: 'file.template', title: 'New from a preset…', category: 'File', icon: L.LayoutTemplate, keywords: 'template budget loan mortgage debt savings net worth stocks crypto nfl fantasy football trip travel project tracker', global: true, run: () => app.openHome('new') });
     a({ id: 'file.open', title: 'Open…', category: 'File', keys: ['Ctrl+O'], icon: L.FolderOpen, global: true, run: () => app.openFile() });
     a({ id: 'file.save', title: 'Save', category: 'File', keys: ['Ctrl+S'], icon: L.Save, global: true, run: () => void app.save() });
     a({ id: 'file.saveAs', title: 'Save as…', category: 'File', keys: ['Ctrl+Shift+S'], icon: L.Save, global: true, run: () => void app.saveAs() });
@@ -289,6 +290,12 @@ export class Commands {
     startFormula('ins.stock', 'Stock price (=STOCK)', L.ChartCandlestick, '=STOCK("', 'quote ticker share price live');
     startFormula('ins.crypto', 'Crypto price (=CRYPTO)', L.Bitcoin, '=CRYPTO("', 'bitcoin ethereum coin price live');
     startFormula('ins.fx', 'Currency conversion (=FX)', L.ArrowLeftRight, '=FX(', 'exchange rate money convert');
+    startFormula('ins.stockHistory', 'Stock price history (=STOCKHISTORY)', L.ChartLine, '=STOCKHISTORY("', 'chart past prices ticker');
+    startFormula('ins.fxrate', 'Exchange rate (=FXRATE)', L.Landmark, '=FXRATE("', 'currency rate money');
+    startFormula('ins.weather', 'Weather (=WEATHER)', L.CloudSun, '=WEATHER("', 'temperature forecast rain');
+    startFormula('ins.forecast', 'Weather forecast table (=WEATHER.FORECAST)', L.CalendarDays, '=WEATHER.FORECAST("', 'temperature days rain');
+    startFormula('ins.holidays', 'Public holidays (=HOLIDAYS)', L.PartyPopper, '=HOLIDAYS("', 'calendar days off country');
+    startFormula('ins.country', 'Country statistics (=COUNTRYDATA)', L.Globe, '=COUNTRYDATA("', 'population gdp inflation world bank');
     chart('column', 'Column chart', L.ChartColumn);
     chart('bar', 'Bar chart', L.ChartBar);
     chart('line', 'Line chart', L.ChartLine);

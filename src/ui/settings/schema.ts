@@ -5,6 +5,7 @@ import { config } from '../../core/config';
 import { TEAMS } from '../../core/data/nflTeams';
 import { setChartPalette } from '../../core/charts';
 import { platform } from '../platform';
+import type { App } from '../app';
 import { uiOptions } from '../widgets';
 import type { SectionDef, SettingDef, SettingOption } from './store';
 
@@ -17,7 +18,7 @@ export const SECTIONS: SectionDef[] = [
   { id: 'smart', label: 'Advanced format', icon: L.Sparkles, description: 'How Advanced format styles your data.' },
   { id: 'files', label: 'Files & saving', icon: L.FileSpreadsheet, description: 'Opening, autosave and CSV options.' },
   { id: 'live', label: 'Live data', icon: L.CloudDownload, description: 'NFL stats, stock prices and exchange rates.' },
-  { id: 'nfl', label: 'NFL', icon: L.Trophy, description: 'Defaults for the NFL data panel and templates.' },
+  { id: 'nfl', label: 'Sports', icon: L.Trophy, description: 'Defaults for NFL data and the sports presets.' },
   { id: 'charts', label: 'Charts', icon: L.ChartColumn, description: 'Colors and defaults for new charts.' },
   { id: 'status', label: 'Status bar', icon: L.PanelBottom, description: 'Totals and controls in the bottom bar.' },
   { id: 'keyboard', label: 'Keyboard & search', icon: L.Keyboard, description: 'Command search and shortcuts.' },
@@ -58,7 +59,7 @@ export const SETTINGS: SettingDef[] = [
   { id: 'ribbon.labels', section: 'ribbon', group: 'Size', label: 'Button labels', description: 'Show text next to icons in the full ribbon.', type: 'toggle', default: true, refresh: ['ribbon', 'layout'] },
   { id: 'ribbon.groupLabels', section: 'ribbon', group: 'Size', label: 'Group names', description: 'The small names under each group (Font, Alignment…).', type: 'toggle', default: true, refresh: ['ribbon', 'layout'] },
   { id: 'ribbon.largeIcons', section: 'ribbon', group: 'Size', label: 'Large icons', type: 'toggle', default: false, refresh: ['ribbon', 'layout'] },
-  { id: 'ribbon.tabs', section: 'ribbon', group: 'Tabs', label: 'Tabs to show', description: 'Home is always shown.', type: 'multi', default: ['insert', 'formulas', 'data', 'view', 'mine', 'help'], options: opts(['insert', 'Insert'], ['formulas', 'Formulas'], ['data', 'Data'], ['view', 'View'], ['mine', 'Money & NFL'], ['help', 'Help']), refresh: ['ribbon'] },
+  { id: 'ribbon.tabs', section: 'ribbon', group: 'Tabs', label: 'Tabs to show', description: 'Home is always shown.', type: 'multi', default: ['insert', 'formulas', 'data', 'live', 'view', 'help'], options: opts(['insert', 'Insert'], ['formulas', 'Formulas'], ['data', 'Data'], ['live', 'Live Data'], ['view', 'View'], ['help', 'Help']), refresh: ['ribbon'] },
   { id: 'ribbon.startTab', section: 'ribbon', group: 'Tabs', label: 'Tab shown when Gridline opens', type: 'select', default: 'home', options: opts(['home', 'Home'], ['last', 'The last tab I used']), refresh: [] },
   { id: 'ribbon.wheelTabs', section: 'ribbon', group: 'Tabs', label: 'Scroll over the tabs to switch between them', type: 'toggle', default: true },
   { id: 'ribbon.autoClose', section: 'ribbon', group: 'Tabs', label: 'Close the pop-up ribbon after a command', description: 'Applies when the ribbon is set to "Tabs only".', type: 'toggle', default: true },
@@ -128,7 +129,7 @@ export const SETTINGS: SettingDef[] = [
   { id: 'smart.filter', section: 'smart', group: 'Layout', label: 'Add filter buttons to the header', type: 'toggle', default: false },
 
   // ---------- Files ----------
-  { id: 'files.startup', section: 'files', group: 'Opening', label: 'When Gridline starts', type: 'select', default: 'blank', options: opts(['blank', 'Open a blank workbook'], ['templates', 'Show the template gallery'], ['last', 'Reopen the last file']) },
+  { id: 'files.startup', section: 'files', group: 'Opening', label: 'When Gridline starts', type: 'select', default: 'home', options: opts(['home', 'Show the Home page (recent files and presets)'], ['blank', 'Open a blank workbook'], ['last', 'Reopen the last file']) },
   { id: 'files.openIn', section: 'files', group: 'Opening', label: 'Open files in', type: 'select', default: 'auto', options: opts(['auto', 'This window if it is empty, otherwise a new one'], ['new', 'Always a new window'], ['same', 'Always this window']) },
   { id: 'files.recentCount', section: 'files', group: 'Opening', label: 'Recent files to show', type: 'number', default: 10, min: 3, max: 30, step: 1 },
   { id: 'files.autosave', section: 'files', group: 'Saving', label: 'AutoSave', description: 'Saves files that already have a location. New files still need a first save.', type: 'select', default: '0', options: minutes(1, 2, 5, 10), refresh: ['timers'] },
@@ -145,18 +146,19 @@ export const SETTINGS: SettingDef[] = [
   { id: 'live.loadingPill', section: 'live', group: 'Connection', label: 'Show "Loading live data" in the status bar', type: 'toggle', default: true, refresh: ['status'] },
   { id: 'live.quoteRefresh', section: 'live', group: 'Prices', label: 'Refresh stock, crypto and currency prices', type: 'select', default: '0', options: minutes(1, 5, 15, 30, 60), refresh: ['timers'] },
   { id: 'live.quoteMaxAge', section: 'live', group: 'Prices', label: 'Reuse a downloaded price for', type: 'number', default: 120, min: 15, max: 3600, step: 15, unit: 'seconds', apply: (v: number) => (config.quoteMaxAgeSec = v) },
-  { id: 'live.currency', section: 'live', group: 'Prices', label: 'Default currency for CRYPTO', type: 'select', default: 'USD', options: CURRENCIES, apply: (v: string) => (config.defaultCurrency = v) },
+  { id: 'live.currency', section: 'live', group: 'Prices', label: 'Your currency', description: 'Used by CRYPTO when no currency is given, and by the crypto and trip presets.', type: 'select', default: 'USD', options: CURRENCIES, apply: (v: string) => (config.defaultCurrency = v) },
+  { id: 'live.units', section: 'live', group: 'Weather', label: 'Units', description: 'For WEATHER and WEATHER.FORECAST.', type: 'select', default: 'auto', options: opts(['auto', 'Automatic (based on your region)'], ['imperial', '°F, mph, inches'], ['metric', '°C, km/h, mm']), apply: (v: string) => (config.units = v === 'metric' || (v === 'auto' && !usesImperial()) ? 'metric' : 'imperial') },
   { id: 'live.nflHours', section: 'live', group: 'NFL data', label: 'Check for new current-season NFL stats every', description: 'Past seasons rarely change and are kept for 30 days.', type: 'number', default: 3, min: 1, max: 48, step: 1, unit: 'hours', apply: (v: number) => (config.nflCurrentSeasonHours = v) },
   { id: 'live.refreshNow', section: 'live', group: 'Downloaded data', label: 'Refresh all live data now', type: 'action', action: { label: 'Refresh', run: (app) => app.commands.run('data.refreshLive') } },
   { id: 'live.cache', section: 'live', group: 'Downloaded data', label: 'Downloaded data on this computer', type: 'info', desktopOnly: true, info: async () => formatBytes(await platform.dataCacheSize()) },
   { id: 'live.clearCache', section: 'live', group: 'Downloaded data', label: 'Delete downloaded data', description: "It's downloaded again when a formula needs it.", type: 'action', desktopOnly: true, action: { label: 'Delete', run: (app) => app.commands.run('data.clearCache') } },
 
   // ---------- NFL ----------
-  { id: 'nfl.team', section: 'nfl', group: 'Defaults', label: 'Favorite team', description: 'Used by the NFL data panel and the NFL season tracker template.', type: 'select', default: 'Chiefs', options: () => [...TEAMS].sort((a, b) => `${a.city} ${a.nickname}`.localeCompare(`${b.city} ${b.nickname}`)).map((t) => ({ value: t.nickname, label: `${t.city} ${t.nickname}` })) },
-  { id: 'nfl.fantasy', section: 'nfl', group: 'Defaults', label: 'Fantasy scoring', type: 'select', default: 'ppr', options: opts(['ppr', 'PPR'], ['half', 'Half PPR'], ['standard', 'Standard']) },
-  { id: 'nfl.seasonType', section: 'nfl', group: 'Defaults', label: 'Games to include', type: 'select', default: 'REG', options: opts(['REG', 'Regular season'], ['POST', 'Playoffs'], ['ALL', 'Regular season + playoffs']) },
-  { id: 'nfl.layout', section: 'nfl', group: 'Defaults', label: 'NFL data panel inserts', type: 'select', default: 'cells', options: opts(['cells', 'Cells you can drag'], ['table', 'One table formula']) },
-  { id: 'nfl.seasons', section: 'nfl', group: 'Defaults', label: 'Seasons to show', type: 'number', default: 5, min: 1, max: 25, step: 1 },
+  { id: 'nfl.team', section: 'nfl', group: 'NFL', label: 'Favorite team', description: 'Used by the NFL data panel and the NFL team tracker preset.', type: 'select', default: '', options: () => [{ value: '', label: 'No favorite' }, ...[...TEAMS].sort((a, b) => `${a.city} ${a.nickname}`.localeCompare(`${b.city} ${b.nickname}`)).map((t) => ({ value: t.nickname, label: `${t.city} ${t.nickname}` }))] },
+  { id: 'nfl.fantasy', section: 'nfl', group: 'NFL', label: 'Fantasy scoring', type: 'select', default: 'ppr', options: opts(['ppr', 'PPR'], ['half', 'Half PPR'], ['standard', 'Standard']) },
+  { id: 'nfl.seasonType', section: 'nfl', group: 'NFL', label: 'Games to include', type: 'select', default: 'REG', options: opts(['REG', 'Regular season'], ['POST', 'Playoffs'], ['ALL', 'Regular season + playoffs']) },
+  { id: 'nfl.layout', section: 'nfl', group: 'NFL', label: 'NFL data panel inserts', type: 'select', default: 'cells', options: opts(['cells', 'Cells you can drag'], ['table', 'One table formula']) },
+  { id: 'nfl.seasons', section: 'nfl', group: 'NFL', label: 'Seasons to show', type: 'number', default: 5, min: 1, max: 25, step: 1 },
 
   // ---------- Charts ----------
   { id: 'charts.palette', section: 'charts', group: 'Colors', label: 'Color palette', type: 'select', default: 'gridline', options: opts(['gridline', 'Gridline'], ['office', 'Office'], ['colorblind', 'Colorblind-friendly'], ['pastel', 'Pastel'], ['vivid', 'Vivid'], ['mono', 'Shades of one color']), apply: (v: string) => setChartPalette(v), refresh: ['charts'] },
@@ -184,14 +186,23 @@ export const SETTINGS: SettingDef[] = [
   { id: 'keyboard.list', section: 'keyboard', group: 'Shortcuts', label: 'All keyboard shortcuts', type: 'action', action: { label: 'Show', run: (app) => app.commands.run('help.shortcuts') } },
 
   // ---------- Updates ----------
-  { id: 'updates.version', section: 'updates', group: 'Version', label: 'Installed version', type: 'info', info: async () => `Gridline ${await platform.appVersion()}` },
+  { id: 'updates.version', section: 'updates', group: 'Version', label: 'Installed version', type: 'info', info: async () => {
+    const v = await platform.appVersion();
+    return v.includes('-') ? `Gridline ${v} (development build)` : `Gridline ${v}`;
+  } },
   { id: 'updates.check', section: 'updates', group: 'Version', label: 'Check for a newer version', type: 'action', desktopOnly: true, action: { label: 'Check now', run: (app) => app.updates.check(false) } },
   { id: 'updates.whatsNew', section: 'updates', group: 'Version', label: "What's new in this version", type: 'action', action: { label: 'Show', run: (app) => app.updates.showWhatsNew() } },
   { id: 'updates.onStartup', section: 'updates', group: 'Automatic updates', label: 'Check for updates when Gridline starts', type: 'toggle', default: true, desktopOnly: true },
   { id: 'updates.autoDownload', section: 'updates', group: 'Automatic updates', label: 'Download updates in the background', description: "You're still asked before anything is installed.", type: 'toggle', default: false, desktopOnly: true },
-  { id: 'updates.channel', section: 'updates', group: 'Automatic updates', label: 'Update channel', description: 'Beta gets new features earlier.', type: 'select', default: 'stable', options: opts(['stable', 'Stable'], ['beta', 'Beta']), desktopOnly: true },
+  { id: 'updates.devBranch', section: 'updates', group: 'Automatic updates', label: 'Developer branch', description: 'Get development builds of Gridline as soon as they are made. They have the newest features first, but may have bugs. Turning this off keeps your current version until the next regular release.', type: 'toggle', default: false, desktopOnly: true, keywords: 'beta preview development pre-release channel', apply: (v: boolean, app: App) => app.updates?.devBranchChanged(v) },
   { id: 'updates.showNotes', section: 'updates', group: 'Automatic updates', label: "Show what's new after updating", type: 'toggle', default: true },
 ];
+
+/** Regions that use °F and miles. */
+function usesImperial(): boolean {
+  const lang = (navigator.language || 'en-US').toLowerCase();
+  return /^en-(us|lr)$|^my\b|^en-um$/.test(lang) || lang === 'en';
+}
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} bytes`;

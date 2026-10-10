@@ -6,7 +6,6 @@ import type { IconNode } from 'lucide';
 import { FUNCTIONS, type Category } from '../core/formula/functions';
 import { FORMAT_PRESETS, formatValue } from '../core/numfmt';
 import { DEFAULT_FONT, DEFAULT_FONT_SIZE } from '../core/styles';
-import { TEMPLATES } from '../core/templates';
 import type { App } from './app';
 import { h, icon } from './dom';
 import { colorPicker, Popover, showMenu, tooltip, type MenuItem } from './widgets';
@@ -60,7 +59,8 @@ const FN_MENUS: [string, Category[], IconNode][] = [
   ['Statistics', ['Statistical'], L.ChartNoAxesColumn],
   ['Info', ['Information'], L.Info],
   ['Money', ['Personal finance'], L.Wallet],
-  ['NFL', ['NFL'], L.Trophy],
+  ['Sports', ['NFL'], L.Trophy],
+  ['World', ['World'], L.Globe],
 ];
 
 export class Ribbon {
@@ -126,8 +126,8 @@ export class Ribbon {
       { id: 'insert', label: 'Insert', groups: () => this.insertGroups() },
       { id: 'formulas', label: 'Formulas', groups: () => this.formulaGroups() },
       { id: 'data', label: 'Data', groups: () => this.dataGroups() },
+      { id: 'live', label: 'Live Data', groups: () => this.liveGroups() },
       { id: 'view', label: 'View', groups: () => this.viewGroups() },
-      { id: 'mine', label: 'Money & NFL', groups: () => this.mineGroups() },
       { id: 'help', label: 'Help', groups: () => this.helpGroups() },
     ];
   }
@@ -149,8 +149,8 @@ export class Ribbon {
     const tabs = this.visibleTabs();
     if (!tabs.some((t) => t.id === this.active)) this.active = 'home';
     this.tabsEl.innerHTML = '';
-    const file = h('button', { class: 'rb-tab file', onclick: (e: MouseEvent) => this.app.titlebar.openFileMenu(e.currentTarget as HTMLElement) }, 'File');
-    tooltip(file, 'New, open, save, export and recent files');
+    const file = h('button', { class: 'rb-tab file', onclick: () => this.app.openHome('home') }, 'File');
+    tooltip(file, 'Home: new workbooks, presets, recent files, save and export', 'Ctrl+Shift+H');
     this.tabsEl.append(file);
     for (const t of tabs) {
       const b = h('button', { class: `rb-tab${t.id === this.active ? ' active' : ''}`, role: 'tab', 'aria-selected': String(t.id === this.active) }, t.label);
@@ -638,8 +638,7 @@ export class Ribbon {
         this.stack([this.cmd('ins.autosum', { label: 'AutoSum' })], [this.cmd('edit.insertDate', { label: "Today's date" })], [this.cmd('edit.insertTime', { label: 'Current time' })]),
       ]),
       this.group('live', 'Live data', L.CloudDownload, () => [
-        this.cmd('nfl.panel', { big: true, label: 'NFL data' }),
-        this.stack([this.cmd('ins.stock', { label: 'Stock price' })], [this.cmd('ins.crypto', { label: 'Crypto price' })], [this.cmd('ins.fx', { label: 'Currency' })]),
+        this.stack([this.cmd('ins.stock', { label: 'Stock price' })], [this.cmd('ins.weather', { label: 'Weather' })], [this.cmd('nfl.panel', { label: 'NFL data' })]),
       ]),
       this.group('links', 'Links & notes', L.Link, () => [this.stack([this.cmd('edit.link', { label: 'Link' })], [this.cmd('edit.note', { label: 'Note' })])]),
       this.group('rowscols', 'Rows & columns', L.BetweenHorizontalStart, () => [
@@ -647,7 +646,7 @@ export class Ribbon {
       ]),
       this.group('sheets', 'Sheets', L.Sheet, () => [
         this.cmd('sheet.add', { big: true, label: 'New sheet' }),
-        this.stack([this.cmd('sheet.duplicate', { label: 'Duplicate sheet' })], [this.cmd('file.template', { label: 'From template' })]),
+        this.stack([this.cmd('sheet.duplicate', { label: 'Duplicate sheet' })], [this.cmd('file.template', { label: 'From a preset' })]),
       ]),
     ];
   }
@@ -714,42 +713,28 @@ export class Ribbon {
     ];
   }
 
-  private mineGroups(): GroupDef[] {
-    const app = this.app;
-    const tpl = (id: string, label: string, ic: IconNode) => this.button(ic, label, () => app.newFromTemplate(id), { showLabel: true });
-    const tips = new Map(TEMPLATES.map((t) => [t.id, t.description]));
-    const withTip = (b: HTMLButtonElement, id: string) => {
-      tooltip(b, tips.get(id) ?? '');
-      return b;
-    };
+  private liveGroups(): GroupDef[] {
     return [
-      this.group('templates', 'Templates', L.LayoutTemplate, () => [
-        this.stack(
-          [withTip(tpl('budget', 'Budget', L.Wallet), 'budget'), withTip(tpl('loan', 'Loan', L.House), 'loan'), withTip(tpl('debt', 'Debt payoff', L.TrendingDown), 'debt')],
-          [withTip(tpl('networth', 'Net worth', L.PiggyBank), 'networth'), withTip(tpl('portfolio', 'Portfolio', L.ChartCandlestick), 'portfolio'), withTip(tpl('nfl', 'NFL tracker', L.Trophy), 'nfl')],
-        ),
+      this.group('finance', 'Finance', L.Landmark, () => [
+        this.cmd('ins.stock', { big: true, label: 'Stock price' }),
+        this.stack([this.cmd('ins.stockHistory', { label: 'Price history' })], [this.cmd('ins.crypto', { label: 'Crypto' })], [this.cmd('ins.fx', { label: 'Convert currency' })]),
       ]),
-      this.group('money', 'Money functions', L.Wallet, () => {
-        const fn = (name: string, label: string, ic: IconNode) => {
-          const b = this.button(ic, label, () => app.insertFunction(name), { showLabel: true });
-          tooltip(b, FUNCTIONS.get(name)?.desc ?? name);
-          return b;
-        };
-        return [
-          this.stack(
-            [fn('AMORTIZATION', 'Loan schedule', L.CalendarRange), fn('DEBTPAYOFF', 'Debt payoff', L.TrendingDown), fn('SAVINGS.PROJECTION', 'Savings growth', L.PiggyBank)],
-            [this.cmd('ins.stock', { label: 'Stock' }), this.cmd('ins.crypto', { label: 'Crypto' }), this.cmd('ins.fx', { label: 'Currency' })],
-          ),
-        ];
-      }),
-      this.group('nfl', 'NFL', L.Trophy, () => [
+      this.group('sports', 'Sports', L.Trophy, () => [
         this.cmd('nfl.panel', { big: true, label: 'NFL data' }),
         this.stack(
-          [this.cmd('nfl.player', { label: 'Player stats' }), this.cmd('nfl.team', { label: 'Team stats' })],
-          [this.cmd('nfl.schedule', { label: 'Schedule' }), this.cmd('nfl.standings', { label: 'Standings' }), this.cmd('nfl.leaders', { label: 'Leaders' })],
+          [this.cmd('nfl.player', { label: 'Players' }), this.cmd('nfl.team', { label: 'Teams' })],
+          [this.cmd('nfl.schedule', { label: 'Schedule' }), this.cmd('nfl.standings', { label: 'Standings' })],
+          [this.cmd('nfl.leaders', { label: 'Leaders' })],
         ),
       ]),
-      this.group('refresh', 'Live data', L.CloudDownload, () => [this.cmd('data.refreshLive', { big: true, label: 'Refresh' })]),
+      this.group('world', 'Weather & world', L.Globe, () => [
+        this.cmd('ins.weather', { big: true, label: 'Weather' }),
+        this.stack([this.cmd('ins.forecast', { label: 'Forecast' })], [this.cmd('ins.holidays', { label: 'Holidays' })], [this.cmd('ins.country', { label: 'Country data' })]),
+      ]),
+      this.group('refresh', 'Refresh', L.CloudDownload, () => [
+        this.cmd('data.refreshLive', { big: true, label: 'Refresh all' }),
+        this.stack([this.cmd('app.settingsLive', { label: 'Live data settings' })], [this.cmd('data.clearCache', { label: 'Delete downloaded data' })]),
+      ]),
     ];
   }
 

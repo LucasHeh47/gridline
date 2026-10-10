@@ -39,6 +39,8 @@ const webFallback: Omit<GridlineApi, 'isDesktop'> & { isDesktop: boolean } = {
   },
   recentFiles: async (): Promise<RecentFile[]> => [],
   clearRecentFiles: async () => undefined,
+  removeRecentFile: async () => undefined,
+  pinRecentFile: async () => undefined,
   async readClipboard() {
     try {
       return { text: await navigator.clipboard.readText(), html: '' };

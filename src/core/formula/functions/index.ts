@@ -9,5 +9,6 @@ import './financial';
 import './lookup';
 import './nfl';
 import './money';
+import './world';
 
 export { FUNCTIONS, VOLATILE_FUNCS, XLFN_FUNCS, XLWS_FUNCS, argNames, type FnDef, type Category, type SuggestKind } from './registry';

@@ -45,7 +45,8 @@ export async function showAbout(): Promise<void> {
   const body = h(
     'div',
     null,
-    h('p', null, `Version ${version}. A fast, simple spreadsheet that opens and saves Excel (.xlsx) and CSV files.`),
+    h('p', null, `Version ${version}${version.includes('-') ? ' (development build)' : ''}. A fast, simple spreadsheet that opens and saves Excel (.xlsx) and CSV files.`),
+    h('p', null, 'Live data comes from nflverse (NFL), Yahoo Finance (stocks), Coinbase (crypto), Frankfurter (exchange rates), Open-Meteo (weather), Nager.Date (holidays) and the World Bank (country data).'),
     h('p', null, 'Formulas: 250+ functions including XLOOKUP, FILTER, SORT, UNIQUE and LET, with dynamic arrays. Errors explain themselves in plain English.'),
   );
   await dialog('About Gridline', body, [{ label: 'Close', value: true, primary: true }]);
