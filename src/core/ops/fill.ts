@@ -1,4 +1,5 @@
 // Auto fill (dragging the fill handle).
+import { config } from '../config';
 import { cellKey, type Range } from '../address';
 import { dateToSerial, DAYS, MONTHS, serialToParts } from '../dates';
 import type { Doc } from '../doc';
@@ -124,7 +125,7 @@ function makeGenerator(doc: Doc, sheet: Sheet, cells: (Cell | undefined)[], mode
     const nums = values as number[];
     const isDate = isDateFormat(fmt(cells[0]));
     if (n === 1) {
-      if (mode === 'series' || isDate) return (k) => withValue(k, nums[0] + k);
+      if (mode === 'series' || isDate || config.fillCountsSingleNumber) return (k) => withValue(k, nums[0] + k);
       return copyGen;
     }
     if (isDate) {

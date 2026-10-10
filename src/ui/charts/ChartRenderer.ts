@@ -11,6 +11,10 @@ export interface ChartTheme {
   muted: string;
   grid: string;
   axis: string;
+  /** Show gridlines behind the data. */
+  gridlines: boolean;
+  /** Show percentages on pie and doughnut slices. */
+  piePercent: boolean;
 }
 
 export interface HitInfo {
@@ -177,7 +181,7 @@ function renderPie(svg: SVGSVGElement, chart: ChartDef, data: ResolvedChart, l: 
     const pct = (v / total) * 100;
     hit(path, { series: s.name, category: data.categories[i] ?? String(i + 1), value: `${formatValue(v, s.format).text} (${pct.toFixed(1)}%)`, color });
     svg.append(path);
-    if (pct >= 5) {
+    if (pct >= 5 && t.piePercent) {
       const mid = (angle + a2) / 2;
       const lr = inner ? (radius + inner) / 2 : radius * 0.65;
       svg.append(el('text', { x: cx + Math.cos(mid) * lr, y: cy + Math.sin(mid) * lr + 4, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 600, fill: '#0b1220', 'pointer-events': 'none' }, `${Math.round(pct)}%`));
@@ -260,10 +264,10 @@ function renderCartesian(svg: SVGSVGElement, chart: ChartDef, data: ResolvedChar
     const v = vs.min + i * vs.step;
     const p = valToPx(v);
     if (horizontal) {
-      grid.append(el('line', { x1: p, x2: p, y1: top, y2: bottom, stroke: Math.abs(v) < 1e-12 ? t.axis : t.grid, 'stroke-width': 1 }));
+      grid.append(el('line', { x1: p, x2: p, y1: top, y2: bottom, stroke: Math.abs(v) < 1e-12 ? t.axis : t.gridlines ? t.grid : 'none', 'stroke-width': 1 }));
       grid.append(el('text', { x: p, y: bottom + 15, 'text-anchor': 'middle', 'font-size': fs, fill: t.muted }, label));
     } else {
-      grid.append(el('line', { x1: left, x2: right, y1: p, y2: p, stroke: Math.abs(v) < 1e-12 ? t.axis : t.grid, 'stroke-width': 1 }));
+      grid.append(el('line', { x1: left, x2: right, y1: p, y2: p, stroke: Math.abs(v) < 1e-12 ? t.axis : t.gridlines ? t.grid : 'none', 'stroke-width': 1 }));
       grid.append(el('text', { x: left - 6, y: p + 4, 'text-anchor': 'end', 'font-size': fs, fill: t.muted }, label));
     }
   });
@@ -273,7 +277,7 @@ function renderCartesian(svg: SVGSVGElement, chart: ChartDef, data: ResolvedChar
     const xToPx = (x: number) => left + ((x - xs.min) / (xs.max - xs.min)) * plotW;
     for (let x = xs.min; x <= xs.max + xs.step / 2; x += xs.step) {
       const px = xToPx(x);
-      svg.append(el('line', { x1: px, x2: px, y1: top, y2: bottom, stroke: t.grid }));
+      if (t.gridlines) svg.append(el('line', { x1: px, x2: px, y1: top, y2: bottom, stroke: t.grid }));
       svg.append(el('text', { x: px, y: bottom + 15, 'text-anchor': 'middle', 'font-size': fs, fill: t.muted }, compact(Number(x.toPrecision(12)))));
     }
     for (const s of data.series) {

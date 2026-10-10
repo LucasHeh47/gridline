@@ -1,4 +1,5 @@
 // NFL data from nflverse (https://github.com/nflverse): player & team stats, games, players.
+import { config } from '../config';
 import { Errors, ErrorValue, type Scalar } from '../values';
 import { external, type Got, type Resource } from './external';
 import { codeInSeason, franchiseOf, teamInfo, teamName } from './nflTeams';
@@ -18,7 +19,7 @@ export function currentSeason(now = new Date()): number {
 
 function maxAgeFor(season: number): number {
   const cur = currentSeason();
-  if (season >= cur) return 3 * HOUR;
+  if (season >= cur) return config.nflCurrentSeasonHours * HOUR;
   if (season === cur - 1) return 2 * DAY;
   return 30 * DAY;
 }
@@ -344,7 +345,12 @@ export function teamWeeksRes(season: number): Resource<Table> {
   return resource(`nfl:teamweek:${season}`, `${RELEASES}/stats_team/stats_team_week_${season}.csv`, maxAgeFor(season), `NFL ${season} weekly team stats`, (t) => new Table(t));
 }
 
-export const gamesRes: Resource<Games> = resource('nfl:games', GAMES_URL, 3 * HOUR, 'NFL game results', (t) => new Games(t));
+export const gamesRes: Resource<Games> = {
+  ...resource('nfl:games', GAMES_URL, 0, 'NFL game results', (t) => new Games(t)),
+  get maxAgeSec() {
+    return config.nflCurrentSeasonHours * HOUR;
+  },
+};
 export const playersRes: Resource<PlayersTable> = resource('nfl:players', `${RELEASES}/players/players.csv`, DAY, 'NFL player profiles', (t) => new PlayersTable(t));
 
 export const playerSeason = (season: number, type: SeasonType): Got<PlayerTable> => external.get(playerSeasonRes(season, type));

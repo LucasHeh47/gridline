@@ -13,9 +13,13 @@ export class StatusBar {
   private mode: HTMLSpanElement;
   private msg: HTMLSpanElement;
   private stats: HTMLDivElement;
+  private zoomBox: HTMLDivElement;
   private zoomRange: HTMLInputElement;
   private zoomPct: HTMLSpanElement;
   private msgTimer: ReturnType<typeof setTimeout> | undefined;
+  private loading: HTMLSpanElement;
+  private progress: HTMLSpanElement;
+  private pending = 0;
 
   constructor(private app: App) {
     this.mode = h('span', { class: 'mode-pill' }, 'Ready');
@@ -28,15 +32,39 @@ export class StatusBar {
     const zoomIn = h('button', { class: 'btn', onclick: () => app.zoomBy(0.1) }, icon(L.Plus, 14));
     tooltip(zoomOut, 'Zoom out', 'Ctrl+scroll');
     tooltip(zoomIn, 'Zoom in', 'Ctrl+scroll');
+    this.zoomBox = h('div', { class: 'zoom' }, zoomOut, this.zoomRange, zoomIn, this.zoomPct);
     this.loading = h('span', { class: 'loading-pill', hidden: true }, h('span', { class: 'spinner' }), 'Loading live data…');
-    this.el = h('div', { class: 'status' }, this.msg, this.loading, this.mode, this.stats, h('div', { class: 'zoom' }, zoomOut, this.zoomRange, zoomIn, this.zoomPct));
+    this.progress = h('span', { class: 'loading-pill progress-pill', hidden: true });
+    this.el = h('div', { class: 'status' }, this.msg, this.progress, this.loading, this.mode, this.stats, this.zoomBox);
     external.onActivity((n) => {
-      this.loading.hidden = n === 0;
-      (this.loading.lastChild as Text).textContent = n > 1 ? `Loading live data (${n})…` : 'Loading live data…';
+      this.pending = n;
+      this.updateLoading();
     });
+    this.rebuild();
   }
 
-  private loading: HTMLSpanElement;
+  /** Applies the status bar settings. */
+  rebuild(): void {
+    const s = this.app.settings;
+    this.zoomBox.hidden = !s.bool('status.zoom');
+    this.mode.hidden = !s.bool('status.mode');
+    this.updateLoading();
+    this.refresh();
+  }
+
+  private updateLoading(): void {
+    const n = this.pending;
+    this.loading.hidden = n === 0 || !this.app.settings.bool('live.loadingPill');
+    (this.loading.lastChild as Text).textContent = n > 1 ? `Loading live data (${n})…` : 'Loading live data…';
+  }
+
+  /** Shows a progress message (e.g. downloading an update); null hides it. */
+  setProgress(label: string | null, percent: number): void {
+    this.progress.hidden = label === null;
+    if (label === null) return;
+    this.progress.innerHTML = '';
+    this.progress.append(h('span', { class: 'spinner' }), `${label} ${Math.round(percent)}%`);
+  }
 
   setMode(m: 'Ready' | 'Enter' | 'Edit' | 'Point'): void {
     this.mode.textContent = m;
@@ -65,6 +93,8 @@ export class StatusBar {
     this.stats.innerHTML = '';
     const sel = app.sel;
     if (sel.isSingleCell) return;
+    const show = new Set(app.settings.list('status.stats'));
+    if (!show.size) return;
     let count = 0;
     let nums = 0;
     let sum = 0;
@@ -87,23 +117,27 @@ export class StatusBar {
     }
     const fmt = app.styleAtActive().numFmt;
     const plain = new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 });
-    const show = (n: number) => (fmt && fmt !== 'General' && fmt !== '@' ? formatValue(Number(n.toPrecision(15)), fmt).text : plain.format(Number(n.toPrecision(15))));
+    const fmtNum = (n: number) => (fmt && fmt !== 'General' && fmt !== '@' ? formatValue(Number(n.toPrecision(15)), fmt).text : plain.format(Number(n.toPrecision(15))));
+    const copy = app.settings.bool('status.copy');
     const stat = (label: string, value: string, raw: string) => {
-      const el = h('span', { class: 'stat', title: 'Click to copy' }, `${label}: `, h('b', null, value));
-      el.addEventListener('click', () => {
-        void platform.writeClipboard({ text: raw });
-        this.flash(`Copied ${label.toLowerCase()} (${value})`);
-      });
+      const el = h('span', { class: `stat${copy ? '' : ' no-copy'}`, title: copy ? 'Click to copy' : '' }, `${label}: `, h('b', null, value));
+      if (copy) {
+        el.addEventListener('click', () => {
+          void platform.writeClipboard({ text: raw });
+          this.flash(`Copied ${label.toLowerCase()} (${value})`);
+        });
+      }
       this.stats.append(el);
     };
     if (nums > 0) {
-      stat('Sum', show(sum), String(sum));
-      stat('Average', show(sum / nums), String(sum / nums));
+      if (show.has('sum')) stat('Sum', fmtNum(sum), String(sum));
+      if (show.has('average')) stat('Average', fmtNum(sum / nums), String(sum / nums));
       if (nums > 1) {
-        stat('Min', show(min), String(min));
-        stat('Max', show(max), String(max));
+        if (show.has('min')) stat('Min', fmtNum(min), String(min));
+        if (show.has('max')) stat('Max', fmtNum(max), String(max));
       }
+      if (show.has('numbers')) stat('Numbers', nums.toLocaleString(), String(nums));
     }
-    if (count > 0) stat('Count', count.toLocaleString(), String(count));
+    if (count > 0 && show.has('count')) stat('Count', count.toLocaleString(), String(count));
   }
 }

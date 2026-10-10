@@ -265,6 +265,11 @@ export class EditController {
       return;
     }
     const sheet = this.app.doc.wb.sheetById(s.sheetId)!;
+    if (!this.app.settings.bool('editing.refColors')) {
+      grid.refHighlights = [];
+      grid.draw();
+      return;
+    }
     grid.refHighlights = refSpans(this.text).flatMap((sp) => {
       const target = sp.ref.sheet ? this.app.doc.wb.sheetByName(sp.ref.sheet) : sheet;
       if (!target) return [];
@@ -440,7 +445,7 @@ export class EditController {
     if (text.startsWith('=') && text.length > 1) {
       const parsed = parseFormula(text.slice(1));
       if (parsed.error) {
-        const fixed = autoFixFormula(text.slice(1));
+        const fixed = this.app.settings.bool('editing.autoFix') ? autoFixFormula(text.slice(1)) : null;
         if (fixed) {
           text = '=' + fixed;
           toast('Fixed the formula by adding what was missing (closing parenthesis or quote).');
@@ -505,7 +510,7 @@ export class EditController {
       return;
     }
     // Suggestions for text arguments ("Passing Yards", "Chiefs"…)
-    const sa = stringArgAtCaret(text, caret);
+    const sa = this.app.settings.bool('editing.argValues') ? stringArgAtCaret(text, caret) : null;
     if (sa) {
       const fcq = functionAtCaret(text, sa.quote);
       const kind = fcq ? FUNCTIONS.get(fcq.name)?.suggest?.[fcq.argIndex] : undefined;
@@ -524,7 +529,7 @@ export class EditController {
       this.closeAc();
     }
     // Autocomplete
-    const id = sa ? null : identifierAtCaret(text, caret);
+    const id = sa || !this.app.settings.bool('editing.autocomplete') ? null : identifierAtCaret(text, caret);
     if (id && id.word.length >= 1) {
       const q = id.word.toUpperCase();
       const items: { name: string; desc: string; kind: string }[] = [];
@@ -554,7 +559,7 @@ export class EditController {
     // Argument hint
     const fc = functionAtCaret(text, caret);
     const def = fc ? FUNCTIONS.get(fc.name) : undefined;
-    if (def && !this.ac) {
+    if (def && !this.ac && this.app.settings.bool('editing.argHints')) {
       const names = argNames(def.args);
       const variadicIdx = names.indexOf('...');
       let current = fc!.argIndex;

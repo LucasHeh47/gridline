@@ -1,4 +1,5 @@
 // Personal finance: loans, debt payoff, savings goals, plus live stock, crypto and currency prices.
+import { config } from '../../config';
 import { dateToSerial, serialToParts, todaySerial } from '../../dates';
 import { external, type Resource } from '../../data/external';
 import { Errors, ErrorValue, isError, type Scalar } from '../../values';
@@ -332,7 +333,7 @@ define(
     const key = field.toLowerCase().replace(/[^a-z0-9%]/g, '');
     const canonical = QUOTE_FIELDS.find((x) => x.toLowerCase().replace(/[^a-z0-9%]/g, '') === key) ?? ({ last: 'Price', close: 'Price', changepct: 'Change %', changepercent: 'Change %', prevclose: 'Previous Close', high: 'Day High', low: 'Day Low', '52whigh': '52 Week High', '52wlow': '52 Week Low', time: 'Updated' } as Record<string, string>)[key];
     if (!canonical) return Errors.value(`Unknown field "${field}". Use one of: ${QUOTE_FIELDS.join(', ')}.`);
-    const res: Resource<ChartResult> = { key: `stock:${ticker}`, url: `${YAHOO}${encodeURIComponent(ticker)}?range=1d&interval=1d`, maxAgeSec: 120, label: `the ${ticker} quote`, parse: parseChart, headers: UA };
+    const res: Resource<ChartResult> = { key: `stock:${ticker}`, url: `${YAHOO}${encodeURIComponent(ticker)}?range=1d&interval=1d`, maxAgeSec: config.quoteMaxAgeSec, label: `the ${ticker} quote`, parse: parseChart, headers: UA };
     const got = external.get(res);
     if (!got.ok) return got.error.code === '#N/A' ? Errors.na(`No quote for "${ticker}". Check the ticker symbol.`) : got.error;
     const m = got.value.meta;
@@ -437,7 +438,7 @@ define(
   (ctx, [s, c, d]) => {
     const sym = argText(ctx, s);
     if (isError(sym)) return sym;
-    const cur = argText(ctx, c, 'USD');
+    const cur = argText(ctx, c, config.defaultCurrency);
     if (isError(cur)) return cur;
     const pair = `${sym.trim().toUpperCase()}-${cur.trim().toUpperCase()}`;
     if (!/^[A-Z0-9]{2,10}-[A-Z]{3,5}$/.test(pair)) return Errors.value(`"${sym}" isn't a crypto symbol like "BTC" or "ETH".`);
@@ -451,7 +452,7 @@ define(
     const res: Resource<number> = {
       key: `crypto:${pair}:${dateStr}`,
       url: `https://api.coinbase.com/v2/prices/${pair}/spot${dateStr ? `?date=${dateStr}` : ''}`,
-      maxAgeSec: dateStr ? 365 * 86400 : 60,
+      maxAgeSec: dateStr ? 365 * 86400 : Math.min(60, config.quoteMaxAgeSec),
       label: `the ${pair} price`,
       parse: (text) => {
         const j = JSON.parse(text) as { data?: { amount?: string } };

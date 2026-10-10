@@ -1,5 +1,6 @@
 // CSV / TSV import and export.
 import { cellKey } from '../address';
+import { config } from '../config';
 import type { Doc } from '../doc';
 import { numberToText } from '../formula/coerce';
 import { parseInput } from '../input';
@@ -112,7 +113,7 @@ export function csvToWorkbook(text: string, fileName: string, delimiter?: string
   rows.forEach((fields, r) => {
     fields.forEach((raw, c) => {
       if (raw === '') return;
-      const p = parseInput(raw);
+      const p = config.csv.detectTypes || (raw.startsWith('=') && raw.length > 1) ? parseInput(raw) : { value: raw };
       const cell: { v?: string | number | boolean | ErrorValue | null; f?: string; s?: number } = {};
       if (p.formula !== undefined) {
         // CSV files from other apps sometimes contain "=..." text; treat as formulas like Excel does.
@@ -145,7 +146,7 @@ function csvField(s: string, delimiter: string): string {
  * Exports a sheet as CSV. Numbers keep full precision (unlike Excel, which writes the rounded
  * display text); dates and times are written as formatted text so other apps can read them.
  */
-export function sheetToCSV(doc: Doc, sheet: Sheet, delimiter = ','): string {
+export function sheetToCSV(doc: Doc, sheet: Sheet, delimiter: string = config.csv.delimiter): string {
   const b = doc.engine.usedBounds(sheet);
   const lines: string[] = [];
   for (let r = 0; r <= b.maxRow; r++) {
@@ -156,7 +157,7 @@ export function sheetToCSV(doc: Doc, sheet: Sheet, delimiter = ','): string {
       if (v === null) s = '';
       else if (typeof v === 'number') {
         const fmt = doc.numFmtAt(sheet, r, c);
-        s = isDateFormat(fmt) ? formatValue(v, fmt).text : numberToText(v);
+        s = isDateFormat(fmt) ? formatValue(v, config.csv.dates === 'iso' ? isoFormatFor(fmt!) : fmt).text : numberToText(v);
       } else if (typeof v === 'boolean') s = v ? 'TRUE' : 'FALSE';
       else if (v instanceof ErrorValue) s = v.code;
       else s = v;
@@ -165,12 +166,23 @@ export function sheetToCSV(doc: Doc, sheet: Sheet, delimiter = ','): string {
     while (fields.length && fields[fields.length - 1] === '') fields.pop();
     lines.push(fields.join(delimiter));
   }
-  return lines.join('\r\n') + '\r\n';
+  return lines.join(config.csv.lineEnding) + config.csv.lineEnding;
+}
+
+/** The ISO 8601 equivalent of a date/time format. */
+function isoFormatFor(fmt: string): string {
+  const f = fmt.replace(/"[^"]*"/g, '');
+  const hasDate = /[dy]/i.test(f) || /m{3,}/i.test(f);
+  const hasTime = /[hs]/i.test(f);
+  if (hasDate && hasTime) return 'yyyy-mm-dd hh:mm:ss';
+  if (hasTime) return 'hh:mm:ss';
+  return 'yyyy-mm-dd';
 }
 
 export function encodeCSV(text: string): Uint8Array {
   // A UTF-8 byte order mark makes Excel and other tools read accented characters correctly.
   const body = new TextEncoder().encode(text);
+  if (!config.csv.bom) return body;
   const out = new Uint8Array(body.length + 3);
   out.set([0xef, 0xbb, 0xbf]);
   out.set(body, 3);

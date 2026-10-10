@@ -2,6 +2,7 @@
 import { cellKey, formatCell, formatRange, isFullColumn, isFullRow, MAX_COLS, MAX_ROWS, parseCell, parseRange, rangeContains, type Range } from '../core/address';
 import { CFEvaluator } from '../core/cf';
 import { external, FetchError } from '../core/data/external';
+import { config } from '../core/config';
 import { Doc, type DocEvent } from '../core/doc';
 import { buildTemplate, TEMPLATES } from '../core/templates';
 import { tokenize } from '../core/formula/tokenizer';
@@ -15,8 +16,10 @@ import { currentRegion } from '../core/ops/data';
 import { autofill, fillDownExtent, type FillMode } from '../core/ops/fill';
 import { setColumnWidth, setRowHeight } from '../core/ops/structure';
 import { ERROR_HELP, ErrorValue } from '../core/values';
-import { Workbook, type Sheet } from '../core/workbook';
+import type { StylePatch } from '../core/styles';
+import { Sheet, Workbook } from '../core/workbook';
 import type { OpenedFile, SaveKind } from '../shared/api';
+import { advancedFormat } from './advancedFormat';
 import { ChartLayer } from './charts/ChartLayer';
 import { Commands } from './commands';
 import { showContextMenu } from './contextMenu';
@@ -32,25 +35,67 @@ import { isDesktop, platform } from './platform';
 import { Selection } from './selection';
 import { SheetTabs } from './sheetTabs';
 import { StatusBar } from './statusBar';
+import { Ribbon } from './ribbon';
+import { SETTINGS } from './settings/schema';
+import { Settings, type Refresh } from './settings/store';
+import { SettingsView } from './settings/SettingsView';
 import { pickTemplate } from './templatePicker';
 import { TitleBar } from './titleBar';
-import { Toolbar } from './toolbar';
-import { dialog, hideTooltip, toast } from './widgets';
+import { Updates } from './updates';
+import { dialog, hideTooltip, toast, type MenuItem } from './widgets';
 
 export interface Prefs {
-  theme: 'dark' | 'light';
-  adaptColors: boolean;
   recentCommands: string[];
   showFormulaBarExpanded: boolean;
 }
 
 const PREFS_KEY = 'gridline.prefs';
 
-function loadPrefs(): Prefs {
-  const base: Prefs = { theme: 'dark', adaptColors: true, recentCommands: [], showFormulaBarExpanded: false };
+/** Accent colors: [dark theme, light theme]. */
+const ACCENTS: Record<string, [string, string]> = {
+  blue: ['#4ea1ff', '#1a73e8'],
+  teal: ['#22b8cf', '#0b7285'],
+  green: ['#3fcf8e', '#188038'],
+  purple: ['#a78bfa', '#7048e8'],
+  pink: ['#f472b6', '#c2255c'],
+  orange: ['#ff9f43', '#d9480f'],
+  red: ['#ff6b6b', '#e03131'],
+  gold: ['#ffd43b', '#b08800'],
+};
+
+const UI_FONTS: Record<string, string> = {
+  system: "'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif",
+  arial: 'Arial, sans-serif',
+  verdana: 'Verdana, sans-serif',
+  tahoma: 'Tahoma, sans-serif',
+  trebuchet: "'Trebuchet MS', sans-serif",
+  georgia: 'Georgia, serif',
+  consolas: 'Consolas, monospace',
+};
+
+function hexToRgb(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/** Mixes a color toward black (amt < 0) or white (amt > 0). */
+function shade(hex: string, amt: number): string {
+  const to = amt < 0 ? 0 : 255;
+  const a = Math.abs(amt);
+  return '#' + hexToRgb(hex).map((c) => Math.round(c + (to - c) * a).toString(16).padStart(2, '0')).join('');
+}
+
+/** File types a workbook can be saved as. */
+type DocKind = 'xlsx' | 'csv' | 'tsv';
+
+/** Preferences saved by 1.0.0 also held the theme, which is now a setting. */
+type SavedPrefs = Prefs & { theme?: string; adaptColors?: boolean };
+
+function loadPrefs(): SavedPrefs {
+  const base: Prefs = { recentCommands: [], showFormulaBarExpanded: false };
   try {
     const raw = localStorage.getItem(PREFS_KEY);
-    if (raw) return { ...base, ...(JSON.parse(raw) as Partial<Prefs>) };
+    if (raw) return { ...base, ...(JSON.parse(raw) as Partial<SavedPrefs>) };
   } catch {
     // ignore
   }
@@ -60,12 +105,14 @@ function loadPrefs(): Prefs {
 export class App {
   doc: Doc;
   sel = new Selection();
-  prefs: Prefs = loadPrefs();
+  prefs: Prefs;
+  settings: Settings;
+  updates: Updates;
   cf: CFEvaluator;
   grid: GridView;
   editor: EditController;
   formulaBar: FormulaBar;
-  toolbar: Toolbar;
+  ribbon: Ribbon;
   tabs: SheetTabs;
   statusbar: StatusBar;
   titlebar: TitleBar;
@@ -84,17 +131,31 @@ export class App {
   private csvChoice: 'xlsx' | 'csv' | null = null;
   readonly root: HTMLElement;
   private explainerEl: HTMLDivElement;
+  private settingsView: SettingsView | null = null;
+  private timers: ReturnType<typeof setInterval>[] = [];
+  private systemDark = window.matchMedia?.('(prefers-color-scheme: dark)');
 
   constructor(root: HTMLElement) {
     this.root = root;
+    const saved = loadPrefs();
+    this.settings = new Settings(SETTINGS);
+    if (saved.theme === 'light' && !this.settings.isModified('appearance.theme')) this.settings.set('appearance.theme', 'light');
+    if (saved.adaptColors === false && !this.settings.isModified('appearance.adaptColors')) this.settings.set('appearance.adaptColors', false);
+    this.prefs = { recentCommands: saved.recentCommands, showFormulaBarExpanded: saved.showFormulaBarExpanded };
+    for (const d of this.settings.defs) d.apply?.(this.settings.get(d.id) as never, this);
     this.applyTheme();
-    this.doc = new Doc();
+    this.applyChrome();
+    this.systemDark?.addEventListener('change', () => {
+      if (this.settings.str('appearance.theme') === 'system') this.applyTheme();
+    });
+    this.doc = new Doc(this.blankWorkbook());
     this.cf = new CFEvaluator(this.doc);
     this.commands = new Commands(this);
     this.grid = new GridView(this);
     this.editor = new EditController(this);
     this.titlebar = new TitleBar(this);
-    this.toolbar = new Toolbar(this);
+    this.ribbon = new Ribbon(this);
+    this.updates = new Updates(this);
     this.formulaBar = new FormulaBar(this);
     this.explainerEl = h('div', { class: 'explainer', hidden: true });
     this.statusbar = new StatusBar(this);
@@ -108,13 +169,16 @@ export class App {
     const main = h('div', { class: 'main' }, this.grid.el, this.panel.el);
     const bottom = h('footer', { class: 'bottombar' }, this.tabs.el, this.statusbar.el);
     this.grid.el.append(this.explainerEl);
-    root.append(this.titlebar.el, this.toolbar.el, this.formulaBar.el, main, bottom);
+    root.append(this.titlebar.el, this.ribbon.el, this.formulaBar.el, main, bottom);
 
     external.fetcher = async (url, opts) => {
-      const r = await platform.fetchData(url, opts);
+      if (!this.settings.bool('live.enabled')) throw new FetchError('live data is turned off (Settings → Live data)');
+      const r = await platform.fetchData(url, { ...opts, offline: this.settings.bool('live.offline') });
       if (!r.ok || r.text === undefined) throw new FetchError(r.error ?? 'Download failed', r.status);
       return r.text;
     };
+    this.settings.onChange((id) => this.onSettingChanged(id));
+    this.applyChrome();
     this.attachDoc();
     this.selSheetId = this.sheet.id;
     this.bindKeys();
@@ -125,7 +189,9 @@ export class App {
     });
     this.refreshAll();
     this.focusGrid();
-    this.openStartupFile();
+    this.restartTimers();
+    void this.openStartupFile();
+    void this.updates.startup();
   }
 
   // ---------- basics ----------
@@ -146,13 +212,219 @@ export class App {
     }
   }
 
+  /** True when the dark theme is showing ("Match Windows" resolved). */
+  get isDark(): boolean {
+    const t = this.settings.str('appearance.theme');
+    return t === 'system' ? this.systemDark?.matches !== false : t === 'dark';
+  }
+
   applyTheme(): void {
-    document.documentElement.dataset.theme = this.prefs.theme;
-    const dark = this.prefs.theme === 'dark';
+    const root = document.documentElement;
+    const dark = this.isDark;
+    root.dataset.theme = dark ? 'dark' : 'light';
+    const s = this.settings;
+    const vars: Record<string, string> = {};
+    // Accent color
+    if (s.str('appearance.accent') !== 'blue') {
+      const pair = ACCENTS[s.str('appearance.accent')] ?? ACCENTS.blue;
+      const a = dark ? pair[0] : pair[1];
+      const [r, g, b] = hexToRgb(a);
+      Object.assign(vars, {
+        '--accent': a,
+        '--accent-strong': shade(a, dark ? -0.15 : -0.2),
+        '--accent-soft': `rgba(${r}, ${g}, ${b}, ${dark ? 0.16 : 0.12})`,
+        '--accent-text': dark ? '#0b1220' : '#ffffff',
+        '--sel-border': a,
+        '--sel-fill': `rgba(${r}, ${g}, ${b}, ${dark ? 0.13 : 0.1})`,
+        '--spill-border': a,
+        '--header-sel-bg': dark ? shade(a, -0.72) : shade(a, 0.82),
+        '--header-sel-text': dark ? shade(a, 0.7) : shade(a, -0.35),
+      });
+    }
+    // Gridline strength
+    const lines = s.str('grid.lines');
+    if (lines !== 'normal') vars['--grid-line'] = dark ? (lines === 'subtle' ? '#1e2126' : '#363b45') : lines === 'subtle' ? '#eef0f3' : '#c8cdd5';
+    // Contrast
+    if (s.str('appearance.contrast') === 'high') {
+      Object.assign(vars, dark ? { '--border': '#454c59', '--border-strong': '#5d6575', '--text-muted': '#b4bccb', '--text-faint': '#8f97a6' } : { '--border': '#b9c0cb', '--border-strong': '#8f98a6', '--text-muted': '#3c4350', '--text-faint': '#5d6573' });
+    }
+    for (const k of ['--accent', '--accent-strong', '--accent-soft', '--accent-text', '--sel-border', '--sel-fill', '--spill-border', '--header-sel-bg', '--header-sel-text', '--grid-line', '--border', '--border-strong', '--text-muted', '--text-faint']) {
+      if (vars[k]) root.style.setProperty(k, vars[k]);
+      else root.style.removeProperty(k);
+    }
     platform.setTheme({ dark, bar: dark ? '#16181d' : '#f6f7f9', symbol: dark ? '#c9ced8' : '#3c4350' });
     clearColorCaches();
     this.grid?.refreshTheme();
     this.charts?.renderAll();
+  }
+
+  /** Window chrome options: density, fonts, and which bars are visible. */
+  applyChrome(): void {
+    const s = this.settings;
+    const root = document.documentElement;
+    root.classList.toggle('is-desktop', isDesktop);
+    root.classList.toggle('density-compact', s.str('appearance.density') === 'compact');
+    root.classList.toggle('reduce-motion', s.bool('appearance.reduceMotion'));
+    root.classList.toggle('thin-scrollbars', s.str('appearance.scrollbars') === 'thin');
+    root.classList.toggle('fbar-ui-font', s.str('formulas.barFont') === 'ui');
+    root.style.setProperty('--ui-font', UI_FONTS[s.str('appearance.uiFont')] ?? UI_FONTS.system);
+    root.style.setProperty('--fbar-size', `${s.num('formulas.barSize')}px`);
+    if (this.formulaBar) this.formulaBar.el.hidden = !s.bool('appearance.showFormulaBar');
+    if (this.statusbar) this.statusbar.el.hidden = !s.bool('appearance.showStatusBar');
+    if (this.tabs) {
+      this.tabs.el.hidden = !s.bool('appearance.showSheetTabs');
+      const bottom = this.tabs.el.parentElement;
+      if (bottom) bottom.hidden = !s.bool('appearance.showStatusBar') && !s.bool('appearance.showSheetTabs');
+    }
+  }
+
+  private onSettingChanged(id: string): void {
+    const d = this.settings.byId.get(id);
+    if (!d) return;
+    d.apply?.(this.settings.get(id) as never, this);
+    const r = new Set<Refresh>(d.refresh ?? []);
+    if (r.has('theme')) this.applyTheme();
+    if (r.has('chrome')) this.applyChrome();
+    if (r.has('ribbon')) this.ribbon.rebuild();
+    if (r.has('titlebar')) this.titlebar.rebuild();
+    if (r.has('status')) this.statusbar.rebuild();
+    if (r.has('charts')) this.charts.renderAll();
+    if (r.has('timers')) this.restartTimers();
+    if (r.has('live')) {
+      external.refresh();
+      this.doc.recalcAll();
+    }
+    if (r.has('grid') || r.has('theme')) this.grid.invalidate();
+    // The grid notices size changes itself; geometry (headings, row heights) must be rebuilt now
+    if (r.has('layout')) this.grid.relayout();
+    this.refreshAll();
+  }
+
+  /** Background timers: AutoSave, price refresh and time-based formulas. */
+  private restartTimers(): void {
+    for (const t of this.timers) clearInterval(t);
+    this.timers = [];
+    const s = this.settings;
+    const autosave = Number(s.str('files.autosave'));
+    if (autosave > 0 && isDesktop) {
+      this.timers.push(
+        setInterval(() => {
+          const d = this.doc;
+          if (d.dirty && d.filePath && d.fileType === 'xlsx' && !this.isEditing) void this.save().then((ok) => ok && this.statusbar.flash('AutoSaved'));
+        }, autosave * 60_000),
+      );
+    }
+    const quotes = Number(s.str('live.quoteRefresh'));
+    if (quotes > 0) this.timers.push(setInterval(() => external.refresh((k) => /^(stock|crypto|fx):/.test(k)), quotes * 60_000));
+    const vol = Number(s.str('formulas.volatileMinutes'));
+    if (vol > 0) this.timers.push(setInterval(() => this.doc.recalcVolatile(), vol * 60_000));
+  }
+
+  /** A new, empty workbook using the "New workbooks" settings. */
+  blankWorkbook(): Workbook {
+    const wb = new Workbook(true);
+    const n = Math.max(1, Math.min(10, this.settings.num('grid.sheetCount')));
+    const prefix = this.settings.str('grid.sheetPrefix') || 'Sheet';
+    for (let i = 0; i < n; i++) {
+      const sheet = new Sheet(`${prefix}${i + 1}`);
+      this.applySheetDefaults(sheet);
+      wb.sheets.push(sheet);
+    }
+    wb.activeSheetId = wb.sheets[0].id;
+    return wb;
+  }
+
+  /** Column width, row height, gridlines and zoom for a new sheet. */
+  applySheetDefaults(sheet: Sheet): void {
+    const s = this.settings;
+    sheet.defaultColWidth = s.num('grid.colWidth');
+    sheet.defaultRowHeight = s.num('grid.rowHeight');
+    sheet.showGrid = s.bool('grid.gridlines');
+    sheet.view.zoom = s.num('grid.defaultZoom') / 100;
+  }
+
+  /** A name for a new sheet, like "Sheet4". */
+  nextSheetName(): string {
+    const prefix = this.settings.str('grid.sheetPrefix') || 'Sheet';
+    const wb = this.doc.wb;
+    let i = wb.sheets.length + 1;
+    while (wb.sheetByName(`${prefix}${i}`)) i++;
+    return `${prefix}${i}`;
+  }
+
+  openSettings(section?: string): void {
+    if (this.isEditing && !this.commitEdit()) return;
+    if (this.settingsView) {
+      this.settingsView.show(section);
+      return;
+    }
+    this.settingsView = new SettingsView(this, section, () => {
+      this.settingsView = null;
+      this.focusGrid();
+    });
+    this.root.append(this.settingsView.el);
+  }
+
+  /** Starts a formula with a function, or adds it to the formula being edited. */
+  insertFunction(name: string): void {
+    if (this.isEditing) {
+      this.editor.insertText(this.editor.text.startsWith('=') ? `${name}(` : `=${name}(`);
+      return;
+    }
+    this.editor.start({ mode: 'enter', initial: `=${name}(`, source: 'cell' });
+  }
+
+  advancedFormat(): void {
+    advancedFormat(this);
+  }
+
+  /** Ready-made cell styles (Home → Cell styles). */
+  cellStyleMenu(): MenuItem[] {
+    const st = (label: string, patch: StylePatch, swatch?: string): MenuItem => ({ label, swatch, run: () => this.applyStyle(`Style: ${label}`, patch) });
+    const reset: StylePatch = { fill: null, color: null, bold: null, italic: null, fontSize: null, borderBottom: null, borderTop: null };
+    return [
+      { title: 'Titles and headings' },
+      st('Title', { ...reset, bold: true, fontSize: 18 }),
+      st('Heading', { ...reset, bold: true, fontSize: 13, borderBottom: { style: 'medium', color: '#4ea1ff' } }),
+      st('Subheading', { ...reset, bold: true }),
+      st('Total', { ...reset, bold: true, borderTop: { style: 'thin' }, borderBottom: { style: 'double' } }),
+      { title: 'Good, bad and neutral' },
+      st('Good', { ...reset, fill: '#dcfce7', color: '#15803d' }, '#dcfce7'),
+      st('Bad', { ...reset, fill: '#fee2e2', color: '#b91c1c' }, '#fee2e2'),
+      st('Neutral', { ...reset, fill: '#fef9c3', color: '#854d0e' }, '#fef9c3'),
+      { title: 'Data' },
+      st('Input', { ...reset, fill: '#fef3c7', borderBottom: { style: 'thin', color: '#d4a72c' } }, '#fef3c7'),
+      st('Calculation', { ...reset, fill: '#f3f4f6', bold: true, color: '#b45309' }, '#f3f4f6'),
+      st('Note', { ...reset, italic: true, color: '#6b7280' }),
+      st('Money', { numFmt: '"$"#,##0.00' }),
+      st('Percent', { numFmt: '0.0%' }),
+      { separator: true },
+      { label: 'Clear formatting', run: () => this.commands.run('edit.clearFormats') },
+    ];
+  }
+
+  accentMenu(): MenuItem[] {
+    const cur = this.settings.str('appearance.accent');
+    return Object.entries(ACCENTS).map(([k, [d, l]]) => ({ label: k[0].toUpperCase() + k.slice(1), swatch: this.isDark ? d : l, checked: cur === k, run: () => this.settings.set('appearance.accent', k) }));
+  }
+
+  /** Before quitting to install an update: offer to save. Returns false to cancel. */
+  async saveBeforeQuit(): Promise<boolean> {
+    if (!this.doc.dirty) return true;
+    const choice = await dialog<'save' | 'discard' | 'cancel'>(
+      `Save changes to "${this.doc.fileName}" first?`,
+      'Gridline will close to finish updating.',
+      [
+        { label: 'Save', value: 'save', primary: true },
+        { label: "Don't save", value: 'discard', danger: true },
+        { label: 'Cancel', value: 'cancel' },
+      ],
+      { cancelValue: 'cancel' },
+    );
+    if (choice === 'cancel') return false;
+    if (choice === 'save') return this.save();
+    this.doc.markSaved();
+    return true;
   }
 
   private attachDoc(): void {
@@ -209,7 +481,7 @@ export class App {
 
   refreshAll(): void {
     this.tabs?.render();
-    this.toolbar?.refresh();
+    this.ribbon?.refresh();
     this.refreshFormulaBar();
     this.statusbar?.refresh();
     this.titlebar?.refresh();
@@ -238,7 +510,7 @@ export class App {
     this.sheet.view.activeCol = a.col;
     this.grid.draw();
     this.refreshFormulaBar();
-    this.toolbar.refresh();
+    this.ribbon.refresh();
     this.updateStats();
     this.charts.deselect();
     this.hideCellTip();
@@ -276,7 +548,7 @@ export class App {
     });
     this.sel.setRange(t, { row: t.r1, col: t.c1 });
     this.onSelectionChanged(false);
-    this.toolbar.refresh();
+    this.ribbon.refresh();
   }
 
   select(range: Range, active?: { row: number; col: number }): void {
@@ -332,6 +604,10 @@ export class App {
   }
 
   enterInput(sheet: Sheet, row: number, col: number, text: string, fillSelection: boolean): void {
+    // "Automatically insert a decimal point": 1999 becomes 19.99 with 2 places
+    const places = this.settings.num('editing.autoDecimal');
+    const t = text.trim();
+    if (places > 0 && /^[+-]?\d+$/.test(t) && !(config.keepLeadingZeros && /^[+-]?0\d/.test(t))) text = String(Number(t) / 10 ** places);
     const tx = this.transact(fillSelection ? 'Fill selection' : 'Edit cell', (tx) => {
       if (fillSelection) fillSelectionWithInput(tx, this.doc, sheet, this.sel.ranges, row, col, text);
       else setCellInput(tx, this.doc, sheet, row, col, text);
@@ -346,6 +622,21 @@ export class App {
   }
 
   moveAfterEnter(move: Move): void {
+    // Enter / Shift+Enter follow the "After pressing Enter, move" setting
+    if (move === 'down' || move === 'up') {
+      const dir = this.settings.str('editing.enterDirection') as Move;
+      if (dir === 'none') return;
+      const opposite: Record<string, Move> = { down: 'up', up: 'down', left: 'right', right: 'left' };
+      if (dir !== 'down') {
+        const next = move === 'down' ? dir : opposite[dir];
+        this.tabStartCol = null;
+        if (next === 'left' || next === 'right') {
+          this.moveActive(0, next === 'right' ? 1 : -1, false, false);
+          return;
+        }
+        move = next;
+      }
+    }
     const sel = this.sel;
     const s = this.sheet;
     const r = sel.range;
@@ -388,7 +679,7 @@ export class App {
       this.moveActive(0, move === 'right' ? 1 : -1, false, false);
       return;
     }
-    if (move === 'down' && this.tabStartCol !== null) {
+    if (move === 'down' && this.tabStartCol !== null && this.settings.bool('editing.tabReturn')) {
       // After Tab, Tab, Enter go back to the starting column, like Excel
       const row = this.grid.rows.step(sel.active.row, 1);
       sel.setCell(s, row, this.tabStartCol);
@@ -583,7 +874,7 @@ export class App {
         }
         if (this.formatPainter) {
           this.formatPainter = null;
-          this.toolbar.refresh();
+          this.ribbon.refresh();
         }
         this.charts.deselect();
         this.findBar.close();
@@ -778,7 +1069,22 @@ export class App {
   }
 
   zoomBy(delta: number): void {
-    this.setZoom(this.sheet.view.zoom + delta);
+    const step = Number(this.settings.str('grid.zoomStep')) / 100 || 0.1;
+    this.setZoom(this.sheet.view.zoom + Math.sign(delta) * step);
+  }
+
+  /** Zooms so the selection fills the window. */
+  zoomToSelection(): void {
+    const r = this.sel.range;
+    const s = this.sheet;
+    let w = 0;
+    let ht = 0;
+    for (let c = r.c1; c <= Math.min(r.c2, r.c1 + 200); c++) w += s.colWidth(c);
+    for (let row = r.r1; row <= Math.min(r.r2, r.r1 + 2000); row++) ht += s.rowHeight(row);
+    const box = this.grid.el.getBoundingClientRect();
+    const z = Math.min((box.width - this.grid.headerW - 24) / Math.max(1, w), (box.height - this.grid.headerH - 24) / Math.max(1, ht));
+    this.setZoom(Math.max(0.25, Math.min(4, z)));
+    this.grid.scrollToCell(r.r1, r.c1);
   }
 
   // ---------- notifications from the grid ----------
@@ -790,7 +1096,7 @@ export class App {
 
   hoverCell(x: number, y: number, e: MouseEvent): void {
     const hit = this.grid.hitTest(x, y);
-    if (hit.kind !== 'cell') {
+    if (hit.kind !== 'cell' || !this.settings.bool('grid.cellTips')) {
       this.hideCellTip();
       return;
     }
@@ -907,14 +1213,14 @@ export class App {
       );
       return;
     }
-    if (!(v instanceof ErrorValue) || v.code === '#BUSY!') {
+    if (!(v instanceof ErrorValue) || v.code === '#BUSY!' || !this.settings.bool('formulas.explain')) {
       el.hidden = true;
       return;
     }
     const help = ERROR_HELP[v.code];
     el.className = 'explainer';
     el.hidden = false;
-    const actions = h('div', { class: 'actions' });
+    const actions = h('div', { class: 'actions', hidden: !this.settings.bool('formulas.quickFixes') });
     const origin = v.origin;
     if (origin && (origin.sheet !== s.name || origin.row !== a.row || origin.col !== a.col)) {
       const label = `${origin.sheet !== s.name ? origin.sheet + '!' : ''}${formatCell(origin.row, origin.col)}`;
@@ -977,7 +1283,17 @@ export class App {
       return;
     }
     const p = params.get('file');
-    if (!p) return;
+    if (!p) {
+      // The first window when Gridline starts: blank, template gallery, or the last file
+      if (params.get('launch') !== '1') return;
+      const start = this.settings.str('files.startup');
+      if (start === 'templates') void this.newFromTemplate();
+      else if (start === 'last') {
+        const last = (await platform.recentFiles())[0];
+        if (last) await this.openRecent(last.path);
+      }
+      return;
+    }
     try {
       const f = await platform.openPath(p);
       if (f) await this.loadFile(f);
@@ -1011,7 +1327,8 @@ export class App {
 
   private loadTemplate(id: string): void {
     const info = TEMPLATES.find((t) => t.id === id);
-    const wb = buildTemplate(id);
+    const scoring = { ppr: 'Fantasy Points PPR', half: 'Fantasy Points Half PPR', standard: 'Fantasy Points' }[this.settings.str('nfl.fantasy')];
+    const wb = buildTemplate(id, { team: this.settings.str('nfl.team'), fantasyStat: scoring });
     if (!info || !wb) return;
     this.loadWorkbook(wb, null, info.name, null);
     this.statusbar.flash(`New ${info.name.toLowerCase()} — the yellow cells are yours to change`);
@@ -1037,7 +1354,8 @@ export class App {
   }
 
   private async openInBestWindow(f: OpenedFile): Promise<void> {
-    if (!this.isPristine() && f.path && isDesktop) {
+    const where = this.settings.str('files.openIn');
+    if (!this.isPristine() && f.path && isDesktop && where !== 'same') {
       platform.newWindow(f.path);
       return;
     }
@@ -1107,7 +1425,7 @@ export class App {
     const d = this.doc;
     if (!d.filePath || !isDesktop) return this.saveAs();
     if (d.fileType === 'csv' || d.fileType === 'tsv') {
-      const choice = this.csvChoice ?? (this.hasNonCsvFeatures() ? await this.askCsvChoice() : 'csv');
+      const choice = this.csvChoice ?? (this.hasNonCsvFeatures() && this.settings.bool('files.csvWarning') ? await this.askCsvChoice() : 'csv');
       if (choice === null) return false;
       this.csvChoice = choice;
       if (choice === 'xlsx') {
@@ -1130,7 +1448,7 @@ export class App {
     const path = await platform.saveFileDialog(suggested, k);
     if (!path) return false;
     const ext = (/\.([^.]+)$/.exec(path)?.[1] ?? k).toLowerCase();
-    const type: SaveKind = ext === 'csv' ? 'csv' : ext === 'tsv' || ext === 'txt' ? 'tsv' : 'xlsx';
+    const type: DocKind = ext === 'csv' ? 'csv' : ext === 'tsv' || ext === 'txt' ? 'tsv' : 'xlsx';
     if (type !== 'xlsx' && this.hasNonCsvFeatures()) {
       const ok = await dialog(
         'Save as CSV?',
@@ -1184,10 +1502,10 @@ export class App {
     );
   }
 
-  private async writeTo(path: string, type: SaveKind): Promise<boolean> {
+  private async writeTo(path: string, type: DocKind): Promise<boolean> {
     try {
       this.statusbar.flash('Saving…');
-      const data = type === 'xlsx' ? await writeXlsx(this.doc) : encodeCSV(sheetToCSV(this.doc, this.sheet, type === 'tsv' ? '\t' : ','));
+      const data = type === 'xlsx' ? await writeXlsx(this.doc) : encodeCSV(sheetToCSV(this.doc, this.sheet, type === 'tsv' ? '\t' : undefined));
       const res = await platform.saveFile(path, data);
       if (!res.ok) {
         toast(res.error ?? 'Saving failed.', { kind: 'error' });

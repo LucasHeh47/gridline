@@ -1,4 +1,5 @@
 // Interprets what the user types into a cell.
+import { config } from './config';
 import { dateToSerial, MONTHS, timeToSerial } from './dates';
 import { parseErrorCode, ErrorValue, type Scalar } from './values';
 
@@ -143,18 +144,19 @@ function parseDateOnly(s: string): { value: number; fmt: string } | null {
     if (!validYmd(y, mo, d)) return null;
     return { value: dateToSerial(y, mo, d), fmt: 'yyyy-mm-dd' };
   }
+  const dmy = config.dateOrder === 'DMY';
   m = /^(\d{1,2})[/-](\d{1,2})[/-](\d{2}|\d{4})$/.exec(s);
   if (m) {
-    const mo = +m[1];
-    const d = +m[2];
+    const mo = dmy ? +m[2] : +m[1];
+    const d = dmy ? +m[1] : +m[2];
     const y = fixYear(+m[3], m[3].length);
     if (!validYmd(y, mo, d)) return null;
-    return { value: dateToSerial(y, mo, d), fmt: 'm/d/yyyy' };
+    return { value: dateToSerial(y, mo, d), fmt: dmy ? 'd/m/yyyy' : 'm/d/yyyy' };
   }
   m = /^(\d{1,2})\/(\d{1,2})$/.exec(s);
   if (m) {
-    const mo = +m[1];
-    const d = +m[2];
+    const mo = dmy ? +m[2] : +m[1];
+    const d = dmy ? +m[1] : +m[2];
     const y = new Date().getFullYear();
     if (!validYmd(y, mo, d)) return null;
     return { value: dateToSerial(y, mo, d), fmt: 'd-mmm' };
@@ -205,15 +207,15 @@ export function parseInput(raw: string, currentFmt?: string): ParsedInput {
     if (code) return { value: new ErrorValue(code, 'This error was typed directly into the cell.') };
   }
   // Leading zeros: keep as text (except "0", "0.5", "-0.5")
-  if (/^[+-]?0\d+$/.test(t)) return { value: raw };
+  if (config.keepLeadingZeros && /^[+-]?0\d+$/.test(t)) return { value: raw };
   const digits = t.replace(/[^0-9]/g, '');
-  if (/^[+-]?\d+$/.test(t) && digits.length > 15) return { value: raw };
+  if (config.longDigitsAsText && /^[+-]?\d+$/.test(t) && digits.length > 15) return { value: raw };
   const num = parseNumberWithFormat(t);
   if (num) {
     const keepFmt = currentFmt && currentFmt !== 'General';
     return { value: num.value, numFmt: keepFmt ? undefined : num.numFmt };
   }
-  const dt = parseDateTime(t);
+  const dt = config.recognizeDates ? parseDateTime(t) : null;
   if (dt) {
     const keepFmt = currentFmt && currentFmt !== 'General' && isDateLike(currentFmt);
     return { value: dt.value, numFmt: keepFmt ? undefined : dt.numFmt };

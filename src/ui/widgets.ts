@@ -155,6 +155,14 @@ export function showMenu(items: MenuItem[], at: HTMLElement | { left: number; to
 
 // ---------- tooltip ----------
 
+/** Options set from Settings. */
+export const uiOptions = {
+  tooltips: true,
+  tooltipDelay: 450,
+  tooltipShortcuts: true,
+  toastMs: 4500,
+};
+
 let tipEl: HTMLDivElement | null = null;
 let tipTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -162,13 +170,15 @@ let tipTimer: ReturnType<typeof setTimeout> | undefined;
 export function tooltip(el: HTMLElement, text: string | (() => string), shortcut?: string): void {
   el.addEventListener('mouseenter', () => {
     clearTimeout(tipTimer);
+    if (!uiOptions.tooltips) return;
     tipTimer = setTimeout(() => {
       hideTooltip();
+      if (!el.isConnected) return;
       const t = typeof text === 'function' ? text() : text;
-      tipEl = h('div', { class: 'tooltip' }, t, shortcut ? h('span', { class: 'tt-k' }, kbd(shortcut)) : null);
+      tipEl = h('div', { class: 'tooltip' }, t, shortcut && uiOptions.tooltipShortcuts ? h('span', { class: 'tt-k' }, kbd(shortcut)) : null);
       document.body.append(tipEl);
       placeNear(tipEl, el.getBoundingClientRect(), 'below', 6);
-    }, 450);
+    }, uiOptions.tooltipDelay);
   });
   el.addEventListener('mouseleave', hideTooltip);
   el.addEventListener('mousedown', hideTooltip);
@@ -212,7 +222,7 @@ export function toast(message: string, opts: { kind?: 'info' | 'success' | 'erro
   el.append(h('button', { class: 'btn', onclick: close, 'aria-label': 'Dismiss' }, icon(X, 14)));
   toastHost.append(el);
   while (toastHost.children.length > 3) toastHost.firstChild?.remove();
-  setTimeout(close, opts.ms ?? (kind === 'error' ? 8000 : 4500));
+  setTimeout(close, opts.ms ?? (kind === 'error' ? uiOptions.toastMs + 3000 : uiOptions.toastMs));
 }
 
 // ---------- dialogs ----------

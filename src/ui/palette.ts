@@ -1,7 +1,8 @@
 // Command palette (Ctrl+K): search every command, jump to cells and sheets, insert functions.
 import * as L from 'lucide';
 import type { IconNode } from 'lucide';
-import { parseRange } from '../core/address';
+import { formatCell, parseRange } from '../core/address';
+import { findAll } from '../core/ops/data';
 import { FUNCTIONS } from '../core/formula/functions';
 import type { App } from './app';
 import { escapeHtml, h, icon, kbd } from './dom';
@@ -95,7 +96,7 @@ export function openPalette(app: App, initial = ''): void {
     const q = input.value.trim();
     const out: Entry[] = [];
     if (!q) {
-      const recent = app.prefs.recentCommands.map((id) => app.commands.get(id)).filter((c): c is NonNullable<typeof c> => !!c && !c.hidden);
+      const recent = (app.settings.bool('keyboard.recent') ? app.prefs.recentCommands : []).map((id) => app.commands.get(id)).filter((c): c is NonNullable<typeof c> => !!c && !c.hidden);
       for (const c of recent) out.push({ label: c.title, category: 'Recently used', icon: c.icon, keys: c.keys?.[0], run: () => app.commands.run(c.id) });
       const seen = new Set(recent.map((c) => c.title));
       for (const e of commandEntries()) if (!seen.has(e.label)) out.push(e);
@@ -123,9 +124,21 @@ export function openPalette(app: App, initial = ''): void {
       const k = e.keywords ? fuzzy(q, e.keywords) : null;
       if (m || (k && k.score > 20)) out.push({ ...e, score: Math.max(m?.score ?? 0, (k?.score ?? 0) - 15), marks: m?.marks ?? [] });
     }
+    // Cell contents
+    if (app.settings.bool('keyboard.cells') && q.length >= 2) {
+      const hits = findAll(app.doc, app.sheet, q, { matchCase: false, wholeCell: false, inFormulas: false, allSheets: true }).slice(0, 8);
+      for (const hit of hits) {
+        const sh = app.doc.wb.sheetById(hit.sheetId);
+        if (!sh) continue;
+        const v = app.doc.engine.getValue(sh, hit.row, hit.col);
+        const where = `${sh.id === app.sheet.id ? '' : sh.name + '!'}${formatCell(hit.row, hit.col)}`;
+        const text = String(v).slice(0, 60);
+        out.push({ label: `${where}: ${text}`, category: 'Cells', icon: L.TextCursorInput, run: () => app.goTo(`'${sh.name.replace(/'/g, "''")}'!${formatCell(hit.row, hit.col)}`), score: 8 });
+      }
+    }
     // Functions
     const fq = q.toUpperCase().replace(/[=(]/g, '');
-    if (fq.length >= 2) {
+    if (fq.length >= 2 && app.settings.bool('keyboard.functions')) {
       for (const def of FUNCTIONS.values()) {
         if (!def.name.includes(fq)) continue;
         const starts = def.name.startsWith(fq);

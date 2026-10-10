@@ -13,6 +13,7 @@ import { toast } from '../widgets';
 import type { PanelContent } from './SidePanel';
 
 type Mode = 'player' | 'team' | 'gamelog' | 'schedule' | 'standings' | 'leaders';
+const MODES: Mode[] = ['player', 'team', 'gamelog', 'schedule', 'standings', 'leaders'];
 
 const PLAYER_PRESETS: Record<string, string[]> = {
   Quarterback: ['Passing Yards', 'Passing TDs', 'Interceptions Thrown', 'Completion %', 'Passer Rating', 'Rushing Yards', 'Rushing TDs'],
@@ -34,22 +35,42 @@ const quote = (s: string) => `"${s.replace(/"/g, '""')}"`;
 export class NFLPanel implements PanelContent {
   title = 'NFL data';
   readonly el: HTMLElement;
-  private mode: Mode = 'player';
+  private mode: Mode;
   private player = 'Patrick Mahomes';
-  private team = 'Chiefs';
-  private first = currentSeason() - 4;
+  private team: string;
+  private first: number;
   private last = currentSeason();
   private stats = new Set<string>(['Passing Yards', 'Passing TDs', 'Rushing Yards', 'Rushing TDs']);
-  private layout: 'table' | 'cells' = 'cells';
-  private seasonType = 'REG';
+  private layout: 'table' | 'cells';
+  private seasonType: string;
   private group = '';
   private leaderStat = 'Passing Yards';
   private count = 10;
   private position = '';
   private insertLabel: HTMLElement | null = null;
 
-  constructor(private app: App) {
+  constructor(
+    private app: App,
+    mode?: string,
+  ) {
+    const s = app.settings;
+    this.mode = MODES.includes(mode as Mode) ? (mode as Mode) : 'player';
+    this.team = s.str('nfl.team') || 'Chiefs';
+    this.first = Math.max(FIRST_SEASON, this.last - Math.max(1, s.num('nfl.seasons')) + 1);
+    this.layout = s.str('nfl.layout') === 'table' ? 'table' : 'cells';
+    this.seasonType = s.str('nfl.seasonType') || 'REG';
+    const fantasy = { ppr: 'Fantasy Points PPR', half: 'Fantasy Points Half PPR', standard: 'Fantasy Points' }[s.str('nfl.fantasy')] ?? 'Fantasy Points PPR';
+    PLAYER_PRESETS.Fantasy = [fantasy, 'Fantasy Points', 'Fantasy Points Half PPR', 'Fantasy Points PPR', 'PPR Points per Game', 'Games'].filter((x, i, a) => a.indexOf(x) === i);
+    if (this.mode === 'team') this.stats = new Set(TEAM_PRESETS.Record.slice(0, 4));
     this.el = h('div', { class: 'sp-body' });
+    this.render();
+  }
+
+  /** Switches the panel to another kind of data (Player stats, Schedule…). */
+  setTab(mode: string): void {
+    if (!MODES.includes(mode as Mode)) return;
+    this.mode = mode as Mode;
+    if (mode === 'team' && ![...this.stats].some((x) => TEAM_PRESETS.Record.includes(x))) this.stats = new Set(TEAM_PRESETS.Record.slice(0, 4));
     this.render();
   }
 

@@ -111,7 +111,7 @@ export class GridView {
   }
 
   refreshTheme(): void {
-    this.theme = readTheme(this.app.prefs.adaptColors);
+    this.theme = readTheme(this.app.settings.bool('appearance.adaptColors'));
     this.invalidate();
   }
 
@@ -130,9 +130,10 @@ export class GridView {
     const z = this.zoom;
     this.rows = new Axis(MAX_ROWS, s.defaultRowHeight, s.rowHeights, [s.hiddenRows, s.filterHidden], z);
     this.cols = new Axis(MAX_COLS, s.defaultColWidth, s.colWidths, [s.hiddenCols], z);
-    this.headerH = Math.round(24 * Math.max(0.8, Math.min(z, 1.4)));
+    const headings = this.app.settings.bool('grid.headings');
+    this.headerH = headings ? Math.round(24 * Math.max(0.8, Math.min(z, 1.4))) : 0;
     const digits = String(Math.max(this.extentRows, 1000)).length;
-    this.headerW = Math.round((14 + digits * 8) * Math.max(0.85, Math.min(z, 1.4)));
+    this.headerW = headings ? Math.round((14 + digits * 8) * Math.max(0.85, Math.min(z, 1.4))) : 0;
     this.frozenH = this.rows.offset(s.freeze.rows);
     this.frozenW = this.cols.offset(s.freeze.cols);
     this.updateExtent();
@@ -278,7 +279,7 @@ export class GridView {
     // Fill handle at the bottom-right of the selection
     const sel = this.app.sel;
     let fillHandle = false;
-    if (sel.ranges.length === 1 && !this.app.isEditing) {
+    if (sel.ranges.length === 1 && !this.app.isEditing && this.app.settings.bool('grid.fillHandle')) {
       const rr = this.rangeRect(sel.range);
       const hx = rr.x + rr.w;
       const hy = rr.y + rr.h;
@@ -447,9 +448,11 @@ export class GridView {
       ctx.restore();
     }
     // Frozen pane separators
-    ctx.fillStyle = t.frozenLine;
-    if (fr > 0) ctx.fillRect(hx, fy - 1, W - hx, 1.5);
-    if (fc > 0) ctx.fillRect(fx - 1, hy, 1.5, H - hy);
+    if (this.app.settings.bool('grid.frozenLine')) {
+      ctx.fillStyle = t.frozenLine;
+      if (fr > 0) ctx.fillRect(hx, fy - 1, W - hx, 1.5);
+      if (fc > 0) ctx.fillRect(fx - 1, hy, 1.5, H - hy);
+    }
     this.drawHeaders(scrollR1, lastR, scrollC1, lastC);
     this.app.charts?.position();
   }
@@ -532,18 +535,20 @@ export class GridView {
     const jobs: TextJob[] = [];
     const borders: { x: number; y: number; w: number; h: number; st: Style }[] = [];
     const marks: { x: number; y: number; w: number; h: number; note: boolean; error: boolean }[] = [];
+    const showNotes = this.app.settings.bool('grid.noteMarkers');
+    const showErrors = this.app.settings.bool('grid.errorMarkers');
 
     const visit = (r: number, c: number, x: number, y: number, w: number, h: number, merged: boolean) => {
       const cell = s.cells.get(cellKey(r, c));
       const sid = cell?.s ?? s.rowStyles.get(r) ?? s.colStyles.get(c);
       const st = wb.styles.get(sid);
       const res = cf.evaluate(s, r, c);
-      // Conditional-format colors are shown as-is; the cell's own fill is adapted for dark mode
+      // Light fills (the cell's own or from conditional formatting) become dark tints in dark mode
       const cfFill = res?.style?.fill ?? res?.fill;
       const fillHex = cfFill ?? st.fill;
       let bg = t.cellBg;
       if (fillHex) {
-        bg = cfFill ?? displayFill(t, fillHex);
+        bg = displayFill(t, fillHex);
         ctx.fillStyle = bg;
         ctx.fillRect(x, y, w - (merged ? 0 : 1), h - (merged ? 0 : 1));
       } else if (merged) {
@@ -573,8 +578,8 @@ export class GridView {
         const jst = spillFmt ? { ...st, numFmt: spillFmt } : st;
         jobs.push({ r, c, x, y, w, h, st: jst, v, bg, merged, cfStyle: res?.style, hideValue: res?.hideValue, icon: res?.icon });
       }
-      if (cell?.note) marks.push({ x, y, w, h, note: true, error: false });
-      if (v instanceof ErrorValue && v.code !== '#BUSY!') marks.push({ x, y, w, h, note: false, error: true });
+      if (cell?.note && showNotes) marks.push({ x, y, w, h, note: true, error: false });
+      if (v instanceof ErrorValue && v.code !== '#BUSY!' && showErrors) marks.push({ x, y, w, h, note: false, error: true });
     };
 
     for (const rp of rowPos) {
@@ -778,13 +783,16 @@ export class GridView {
     const isNum = typeof v === 'number' && !isFormulaText;
     const avail = j.w - PAD * 2 - iconW;
     if (isNum) {
+      if (v === 0 && !this.app.settings.bool('grid.showZeros')) return;
       const digitW = this.measure(font, '0');
       const maxChars = Math.max(1, Math.floor(avail / Math.max(1, digitW)));
       const f = formatValue(v, st.numFmt, Math.min(11, maxChars));
       text = f.text;
       color = f.color;
+      // Negative numbers in red, unless the cell or its format already chooses a color
+      if (v < 0 && !color && !st.color && !j.cfStyle?.color && this.app.settings.bool('grid.negativeRed')) color = t.dark ? '#ff7b7b' : '#d93025';
     } else if (v instanceof ErrorValue) {
-      text = v.code === '#BUSY!' ? 'Loading…' : v.code;
+      text = v.code === '#BUSY!' ? (this.app.settings.str('grid.loadingText') === 'busy' ? '#BUSY!' : 'Loading…') : v.code;
       color = v.code === '#BUSY!' ? t.headerText : t.errorMark;
     } else if (typeof v === 'boolean') text = v ? 'TRUE' : 'FALSE';
     else {
@@ -1047,7 +1055,17 @@ export class GridView {
 
     // Spilled array border for the active cell
     const anchor = this.app.doc.engine.spillAnchorOf(s, sel.active.row, sel.active.col) ?? sel.active;
-    const spill = this.app.doc.engine.spillAt(s, anchor.row, anchor.col);
+    const spill = this.app.settings.bool('grid.spillBorder') ? this.app.doc.engine.spillAt(s, anchor.row, anchor.col) : null;
+    // Reading guide: a faint band across the active row and down the active column
+    if (this.app.settings.bool('grid.crosshair') && !this.app.isEditing) {
+      const a = this.cellRect(sel.active.row, sel.active.col);
+      ctx.save();
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = t.selFill;
+      ctx.fillRect(this.headerW, a.y, this.width - this.headerW, a.h - 1);
+      ctx.fillRect(a.x, this.headerH, a.w - 1, this.height - this.headerH);
+      ctx.restore();
+    }
     if (spill) {
       const r = this.rangeRect(spill);
       ctx.strokeStyle = t.spillBorder;
@@ -1104,7 +1122,7 @@ export class GridView {
       ctx.lineWidth = 2;
       ctx.strokeRect(a.x - 0.5, a.y - 0.5, a.w, a.h);
       // Fill handle
-      if (sel.ranges.length === 1) {
+      if (sel.ranges.length === 1 && this.app.settings.bool('grid.fillHandle')) {
         const r = this.rangeRect(sel.range);
         const hs = 7;
         ctx.fillStyle = t.selBorder;
@@ -1137,6 +1155,7 @@ export class GridView {
   }
 
   private drawHeaders(scrollR1: number, lastR: number, scrollC1: number, lastC: number): void {
+    if (!this.headerW || !this.headerH) return;
     const ctx = this.ctx;
     const t = this.theme;
     const s = this.sheet;
@@ -1147,8 +1166,9 @@ export class GridView {
     const hy = this.headerH;
     const fullCols = new Set(sel.fullColumns());
     const fullRows = new Set(sel.fullRows());
-    const colSelected = (c: number) => sel.ranges.some((r) => c >= r.c1 && c <= r.c2);
-    const rowSelected = (r: number) => sel.ranges.some((rg) => r >= rg.r1 && r <= rg.r2);
+    const highlight = this.app.settings.bool('grid.highlightHeadings');
+    const colSelected = (c: number) => highlight && sel.ranges.some((r) => c >= r.c1 && c <= r.c2);
+    const rowSelected = (r: number) => highlight && sel.ranges.some((rg) => r >= rg.r1 && r <= rg.r2);
     const fontPx = Math.max(10, Math.min(13, 11.5 * this.zoom));
     ctx.font = `${fontPx}px "Segoe UI", system-ui, sans-serif`;
 
@@ -1254,7 +1274,7 @@ export class GridView {
       clearInterval(this.marqueeTimer);
       this.marqueeTimer = null;
     }
-    if (m) {
+    if (m && !this.app.settings.bool('appearance.reduceMotion')) {
       this.marqueeTimer = window.setInterval(() => {
         this.marqueeOffset = (this.marqueeOffset + 1) % 10;
         this.draw();
@@ -1268,7 +1288,16 @@ export class GridView {
   private onWheel(e: WheelEvent): void {
     if (e.ctrlKey) {
       e.preventDefault();
-      this.app.zoomBy(e.deltaY < 0 ? 0.1 : -0.1);
+      if (this.app.settings.bool('grid.ctrlWheelZoom')) this.app.zoomBy(e.deltaY < 0 ? 0.1 : -0.1);
+      return;
+    }
+    const speed = this.app.settings.num('grid.scrollSpeed');
+    if (speed !== 1) {
+      e.preventDefault();
+      const unit = e.deltaMode === 1 ? 20 : e.deltaMode === 2 ? this.height : 1;
+      const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX;
+      const dy = e.shiftKey && !e.deltaX ? 0 : e.deltaY;
+      this.scroller.scrollBy({ left: dx * unit * speed, top: dy * unit * speed });
     }
   }
 
@@ -1508,6 +1537,7 @@ export class GridView {
         this.app.fillDownDoubleClick();
         return;
       }
+      if (!this.app.settings.bool('grid.doubleClickEdit')) return;
       if (hit.filterButton) return;
       this.app.startEdit({ mode: 'edit' });
     }

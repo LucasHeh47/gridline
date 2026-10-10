@@ -1,5 +1,6 @@
 // Undoable transactions. Every user action is one Transaction; undo replays its changes backwards.
 import { cellKey, keyCol, keyRow } from './address';
+import { config } from './config';
 import type { Cell, Sheet, Workbook } from './workbook';
 
 type Change =
@@ -141,12 +142,11 @@ export class History {
   private redoStack: Transaction[] = [];
   /** Increments on every change; used to detect unsaved changes. */
   version = 0;
-  private limit = 200;
 
   push(tx: Transaction): void {
     if (tx.isEmpty) return;
     this.undoStack.push(tx);
-    if (this.undoStack.length > this.limit) this.undoStack.shift();
+    while (this.undoStack.length > Math.max(10, config.undoLimit)) this.undoStack.shift();
     this.redoStack = [];
     this.version++;
   }
@@ -175,6 +175,10 @@ export class History {
 
   get canRedo(): boolean {
     return this.redoStack.length > 0;
+  }
+
+  peekUndo(): Transaction | undefined {
+    return this.undoStack[this.undoStack.length - 1];
   }
 
   peekUndoLabel(): string | undefined {

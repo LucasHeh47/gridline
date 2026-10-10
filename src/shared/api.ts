@@ -12,7 +12,7 @@ export interface RecentFile {
   openedAt: number;
 }
 
-export type SaveKind = 'xlsx' | 'csv' | 'tsv';
+export type SaveKind = 'xlsx' | 'csv' | 'tsv' | 'json';
 
 export interface SaveResult {
   ok: boolean;
@@ -43,8 +43,44 @@ export interface GridlineApi {
   toggleDevTools(): void;
   appVersion(): Promise<string>;
   /** Downloads live data through the desktop shell (allow-listed sites, cached on disk). */
-  fetchData(url: string, opts: { maxAgeSec: number; headers?: Record<string, string> }): Promise<FetchResult>;
+  fetchData(url: string, opts: { maxAgeSec: number; headers?: Record<string, string>; offline?: boolean }): Promise<FetchResult>;
   clearDataCache(): Promise<void>;
+  /** Size of the downloaded-data cache in bytes. */
+  dataCacheSize(): Promise<number>;
+  /** Scales the whole window (1 = 100%). */
+  setZoomFactor(factor: number): void;
+  updates: UpdatesApi;
+}
+
+export interface UpdateCheckOptions {
+  /** A background check at startup (no message when there's nothing new). */
+  silent?: boolean;
+  allowPrerelease?: boolean;
+  autoDownload?: boolean;
+}
+
+export interface UpdateState {
+  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error' | 'unsupported';
+  /** Version currently running. */
+  current: string;
+  /** Newest version found. */
+  version?: string;
+  notes?: string;
+  percent?: number;
+  error?: string;
+  /** Portable builds can't update themselves; `url` is the download page. */
+  portable?: boolean;
+  url?: string;
+}
+
+export interface UpdatesApi {
+  check(opts: UpdateCheckOptions): Promise<UpdateState>;
+  state(): Promise<UpdateState>;
+  download(): Promise<UpdateState>;
+  /** Closes Gridline, installs the downloaded update and reopens. */
+  install(): Promise<boolean>;
+  openPage(): Promise<void>;
+  onState(cb: (s: UpdateState) => void): void;
 }
 
 export interface FetchResult {

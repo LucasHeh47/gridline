@@ -6,7 +6,7 @@ import { formatValue, isDateFormat } from '../../core/numfmt';
 import type { BorderStyle, HAlign, StylePatch, VAlign } from '../../core/styles';
 import type { App } from '../app';
 import { h, icon } from '../dom';
-import { FONTS } from '../toolbar';
+import { FONTS } from '../ribbon';
 import { clampRange } from '../commands';
 import { colorPicker, tooltip } from '../widgets';
 import type { PanelContent } from './SidePanel';

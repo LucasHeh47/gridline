@@ -67,7 +67,7 @@ export class SidePanel {
         this.content = new FunctionsPanel(app);
         break;
       case 'nfl':
-        this.content = new NFLPanel(app);
+        this.content = new NFLPanel(app, sub);
         break;
     }
     this.titleEl.textContent = this.content.title;

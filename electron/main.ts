@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { setupUpdates } from './updater';
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
 const SMOKE_SCREENSHOT = process.env.GRIDLINE_SCREENSHOT;
@@ -46,7 +47,7 @@ async function addRecent(p: string): Promise<void> {
   const list = (await readRecent()).filter((r) => r.path.toLowerCase() !== p.toLowerCase());
   list.unshift({ path: p, name: path.basename(p), openedAt: Date.now() });
   await fs.mkdir(app.getPath('userData'), { recursive: true });
-  await fs.writeFile(recentPath(), JSON.stringify(list.slice(0, 12), null, 2));
+  await fs.writeFile(recentPath(), JSON.stringify(list.slice(0, 30), null, 2));
   app.addRecentDocument(p);
 }
 
@@ -56,7 +57,7 @@ function filesFromArgv(argv: string[]): string[] {
   return argv.slice(1).filter((a) => !a.startsWith('-') && SUPPORTED.test(a) && existsSync(a));
 }
 
-function createWindow(filePath?: string, template?: string): BrowserWindow {
+function createWindow(filePath?: string, template?: string, launch = false): BrowserWindow {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -78,7 +79,7 @@ function createWindow(filePath?: string, template?: string): BrowserWindow {
   });
   const id = win.webContents.id;
   if (filePath) allow(filePath);
-  const query: Record<string, string> | undefined = filePath ? { file: path.resolve(filePath) } : template ? { template } : undefined;
+  const query: Record<string, string> | undefined = filePath ? { file: path.resolve(filePath) } : template ? { template } : launch ? { launch: '1' } : undefined;
   if (DEV_URL) win.loadURL(DEV_URL + (query ? `?${new URLSearchParams(query)}` : ''));
   else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { query });
 
@@ -167,8 +168,10 @@ ipcMain.handle('file:save-dialog', async (e, defaultName: string, kind: string) 
       ? [{ name: 'CSV (comma-separated)', extensions: ['csv'] }]
       : kind === 'tsv'
         ? [{ name: 'Tab-separated text', extensions: ['tsv', 'txt'] }]
-        : [{ name: 'Excel workbook', extensions: ['xlsx'] }];
-  const res = await dialog.showSaveDialog(win!, { title: 'Save as', defaultPath: defaultName, filters });
+        : kind === 'json'
+          ? [{ name: 'Gridline settings', extensions: ['json'] }]
+          : [{ name: 'Excel workbook', extensions: ['xlsx'] }];
+  const res = await dialog.showSaveDialog(win!, { title: kind === 'json' ? 'Export settings' : 'Save as', defaultPath: defaultName, filters });
   if (res.canceled || !res.filePath) return null;
   return allow(res.filePath);
 });
@@ -181,7 +184,7 @@ ipcMain.handle('file:save', async (_e, p: string, data: Uint8Array) => {
     // Write to a temporary file first so a crash can't leave a half-written spreadsheet.
     await fs.writeFile(tmp, Buffer.from(data));
     await fs.rename(tmp, full);
-    await addRecent(full);
+    if (SUPPORTED.test(full)) await addRecent(full);
     return { ok: true };
   } catch (err) {
     await fs.rm(tmp, { force: true }).catch(() => undefined);
@@ -263,7 +266,7 @@ ipcMain.handle('app:version', () => app.getVersion());
 const DATA_HOSTS = new Set(['github.com', 'raw.githubusercontent.com', 'api.frankfurter.dev', 'api.coinbase.com', 'query1.finance.yahoo.com', 'query2.finance.yahoo.com']);
 const cacheDir = () => path.join(app.getPath('userData'), 'data-cache');
 
-ipcMain.handle('net:fetch', async (_e, url: string, opts: { maxAgeSec?: number; headers?: Record<string, string> }) => {
+ipcMain.handle('net:fetch', async (_e, url: string, opts: { maxAgeSec?: number; headers?: Record<string, string>; offline?: boolean }) => {
   let u: URL;
   try {
     u = new URL(String(url));
@@ -281,6 +284,10 @@ ipcMain.handle('net:fetch', async (_e, url: string, opts: { maxAgeSec?: number; 
     // not cached yet
   }
   if (cached && cached.age < maxAge) return { ok: true, status: 200, text: cached.text, cached: true };
+  if (opts?.offline) {
+    if (cached) return { ok: true, status: 200, text: cached.text, cached: true, stale: true };
+    return { ok: false, status: 0, error: "Offline mode is on and this data hasn't been downloaded yet" };
+  }
   try {
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(opts?.headers ?? {})) if (/^(user-agent|accept)$/i.test(k)) headers[k] = String(v);
@@ -303,6 +310,18 @@ ipcMain.handle('net:fetch', async (_e, url: string, opts: { maxAgeSec?: number; 
 ipcMain.handle('net:clear-cache', async () => {
   await fs.rm(cacheDir(), { recursive: true, force: true }).catch(() => undefined);
 });
+
+ipcMain.handle('net:cache-size', async () => {
+  let total = 0;
+  try {
+    for (const f of await fs.readdir(cacheDir())) total += (await fs.stat(path.join(cacheDir(), f))).size;
+  } catch {
+    // no cache yet
+  }
+  return total;
+});
+
+setupUpdates();
 
 // ---------- lifecycle ----------
 
@@ -328,7 +347,7 @@ if (!app.requestSingleInstanceLock()) {
     if (process.env.GRIDLINE_OPEN && existsSync(process.env.GRIDLINE_OPEN)) files.push(process.env.GRIDLINE_OPEN);
     const startTemplate = process.env.GRIDLINE_TEMPLATE;
     if (files.length) for (const f of files) createWindow(f);
-    else createWindow(undefined, startTemplate && /^[a-z-]{1,32}$/.test(startTemplate) ? startTemplate : undefined);
+    else createWindow(undefined, startTemplate && /^[a-z-]{1,32}$/.test(startTemplate) ? startTemplate : undefined, true);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });

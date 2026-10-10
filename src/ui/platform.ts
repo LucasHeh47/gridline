@@ -65,6 +65,16 @@ const webFallback: Omit<GridlineApi, 'isDesktop'> & { isDesktop: boolean } = {
   },
   setDirty: () => undefined,
   setTheme: () => undefined,
+  dataCacheSize: async () => 0,
+  setZoomFactor: () => undefined,
+  updates: {
+    check: async () => ({ status: 'unsupported', current: __APP_VERSION__, error: 'Updates are available in the desktop app.' }),
+    state: async () => ({ status: 'unsupported', current: __APP_VERSION__ }),
+    download: async () => ({ status: 'unsupported', current: __APP_VERSION__ }),
+    install: async () => false,
+    openPage: async () => undefined,
+    onState: () => undefined,
+  },
   newWindow: (_p, t) => window.open(location.pathname + (t ? `?template=${encodeURIComponent(t)}` : ''), '_blank'),
   openExternal: (url) => {
     if (/^(https?:|mailto:)/i.test(url)) window.open(url, '_blank', 'noopener');
@@ -73,7 +83,7 @@ const webFallback: Omit<GridlineApi, 'isDesktop'> & { isDesktop: boolean } = {
   confirmClose: () => undefined,
   onRequestClose: () => undefined,
   toggleDevTools: () => undefined,
-  appVersion: async () => 'dev',
+  appVersion: async () => __APP_VERSION__,
   async fetchData(url, opts) {
     try {
       const res = await fetch(url, { headers: opts.headers });

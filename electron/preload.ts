@@ -1,5 +1,5 @@
 // Exposes a minimal, typed API to the UI. The UI never gets direct Node or file-system access.
-import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { contextBridge, ipcRenderer, webFrame, webUtils } from 'electron';
 import type { GridlineApi, OpenedFile, SaveKind } from '../src/shared/api';
 
 const api: GridlineApi = {
@@ -33,6 +33,18 @@ const api: GridlineApi = {
   appVersion: () => ipcRenderer.invoke('app:version'),
   fetchData: (url, opts) => ipcRenderer.invoke('net:fetch', url, opts),
   clearDataCache: () => ipcRenderer.invoke('net:clear-cache'),
+  dataCacheSize: () => ipcRenderer.invoke('net:cache-size'),
+  setZoomFactor: (f) => webFrame.setZoomFactor(Math.min(2, Math.max(0.5, Number(f) || 1))),
+  updates: {
+    check: (opts) => ipcRenderer.invoke('updates:check', opts),
+    state: () => ipcRenderer.invoke('updates:state'),
+    download: () => ipcRenderer.invoke('updates:download'),
+    install: () => ipcRenderer.invoke('updates:install'),
+    openPage: () => ipcRenderer.invoke('updates:open-page'),
+    onState: (cb) => {
+      ipcRenderer.on('updates:state', (_e, s) => cb(s));
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld('gridline', api);

@@ -93,10 +93,12 @@ export class Commands {
     if (this.app.isEditing && !c.whileEditing) {
       if (!this.app.commitEdit()) return;
     }
-    const recent = this.app.prefs.recentCommands.filter((x) => x !== id);
-    recent.unshift(id);
-    this.app.prefs.recentCommands = recent.slice(0, 8);
-    this.app.savePrefs();
+    if (this.app.settings.bool('keyboard.remember')) {
+      const recent = this.app.prefs.recentCommands.filter((x) => x !== id);
+      recent.unshift(id);
+      this.app.prefs.recentCommands = recent.slice(0, 8);
+      this.app.savePrefs();
+    }
     try {
       const r = c.run();
       if (r instanceof Promise) r.catch((err: Error) => toast(String(err?.message ?? err), { kind: 'error' }));
@@ -249,7 +251,7 @@ export class Commands {
     a({ id: 'fmt.fontSmaller', title: 'Decrease font size', category: 'Format', keys: ['Ctrl+Shift+,'], icon: L.AArrowDown, run: () => app.applyStyle('Font size', (s) => ({ fontSize: nextSize(s.fontSize ?? 11, -1) })) });
     const border = (p: BorderPreset, title: string, icon: IconNode) =>
       a({ id: `fmt.border.${p}`, title, category: 'Borders', icon, keywords: 'border lines', run: () => app.transact(title, (tx) => {
-        for (const r of sel().ranges) applyBorders(tx, app.doc.wb, sheet(), clampRange(app, r), p, { style: 'thin', color: app.toolbar.borderColor });
+        for (const r of sel().ranges) applyBorders(tx, app.doc.wb, sheet(), clampRange(app, r), p, { style: 'thin', color: app.ribbon.borderColor });
       }) });
     border('all', 'All borders', L.Grid3x3);
     border('outer', 'Outside borders', L.Square);
@@ -263,6 +265,7 @@ export class Commands {
     border('horizontal', 'Inner horizontal borders', L.Rows3);
     border('vertical', 'Inner vertical borders', L.Columns3);
     border('none', 'Remove borders', L.SquareDashed);
+    a({ id: 'fmt.advanced', title: 'Advanced format — format this table automatically', category: 'Format', keys: ['Ctrl+Alt+F'], icon: L.Sparkles, keywords: 'smart auto format table magic ai style', run: () => app.advancedFormat() });
     a({ id: 'fmt.cf', title: 'Conditional formatting…', category: 'Format', icon: L.Highlighter, keywords: 'color scale data bars highlight rules icon sets', run: () => app.panel.open('cf') });
     a({ id: 'fmt.clearCf', title: 'Clear conditional formatting from selection', category: 'Format', icon: L.Highlighter, run: () => clearCf(app) });
 
@@ -277,6 +280,15 @@ export class Commands {
     for (const fn of ['AVERAGE', 'COUNT', 'MAX', 'MIN']) a({ id: `ins.auto.${fn}`, title: `Auto ${fn[0] + fn.slice(1).toLowerCase()}`, category: 'Insert', icon: L.Sigma, run: () => autoSum(app, fn) });
     a({ id: 'ins.function', title: 'Insert function…', category: 'Insert', keys: ['Shift+F3'], icon: L.SquareFunction, keywords: 'formula browse functions', run: () => app.panel.open('functions') });
     const chart = (type: ChartType, title: string, icon: IconNode) => a({ id: `ins.chart.${type}`, title, category: 'Insert', icon, keywords: 'chart graph plot', run: () => insertChart(app, type) });
+    a({ id: 'ins.chart.quick', title: 'Quick chart', category: 'Insert', keys: ['F11', 'Alt+F1'], icon: L.ChartColumnIncreasing, keywords: 'chart graph plot', run: () => insertChart(app, app.settings.str('charts.type') as ChartType) });
+    const startFormula = (id: string, title: string, icon: IconNode, text: string, keywords: string) =>
+      a({ id, title, category: 'Insert', icon, keywords, run: () => {
+        if (app.isEditing) app.editor.insertText(app.editor.text.startsWith('=') ? text.slice(1) : text);
+        else app.editor.start({ mode: 'enter', initial: text, source: 'cell' });
+      } });
+    startFormula('ins.stock', 'Stock price (=STOCK)', L.ChartCandlestick, '=STOCK("', 'quote ticker share price live');
+    startFormula('ins.crypto', 'Crypto price (=CRYPTO)', L.Bitcoin, '=CRYPTO("', 'bitcoin ethereum coin price live');
+    startFormula('ins.fx', 'Currency conversion (=FX)', L.ArrowLeftRight, '=FX(', 'exchange rate money convert');
     chart('column', 'Column chart', L.ChartColumn);
     chart('bar', 'Bar chart', L.ChartBar);
     chart('line', 'Line chart', L.ChartLine);
@@ -314,6 +326,12 @@ export class Commands {
     a({ id: 'data.trace', title: 'Show cells this formula uses', category: 'Data', icon: L.Workflow, keywords: 'trace precedents', run: () => tracePrecedents(app) });
 
     a({ id: 'nfl.panel', title: 'NFL data — insert player, team, schedule or standings stats', category: 'Insert', icon: L.Trophy, keywords: 'football stats nflverse player team qb fantasy', run: () => app.panel.open('nfl') });
+    const nfl = (mode: string, title: string, icon: IconNode) => a({ id: `nfl.${mode}`, title: `NFL: ${title}`, category: 'Insert', icon, keywords: 'football nfl', run: () => app.panel.open('nfl', mode) });
+    nfl('player', 'player stats', L.User);
+    nfl('team', 'team stats', L.Users);
+    nfl('schedule', 'team schedule', L.CalendarDays);
+    nfl('standings', 'standings', L.ListOrdered);
+    nfl('leaders', 'league leaders', L.Medal);
 
     // ---------- View ----------
     a({ id: 'view.freezeTop', title: 'Freeze top row', category: 'View', icon: L.Snowflake, run: () => setFreeze(app, 1, 0) });
@@ -328,18 +346,29 @@ export class Commands {
     a({ id: 'view.zoomIn', title: 'Zoom in', category: 'View', keys: ['Ctrl+Alt+='], icon: L.ZoomIn, run: () => app.zoomBy(0.1) });
     a({ id: 'view.zoomOut', title: 'Zoom out', category: 'View', keys: ['Ctrl+Alt+-'], icon: L.ZoomOut, run: () => app.zoomBy(-0.1) });
     a({ id: 'view.zoomReset', title: 'Zoom to 100%', category: 'View', keys: ['Ctrl+0'], icon: L.Search, run: () => app.setZoom(1) });
-    a({ id: 'view.theme', title: 'Switch light / dark theme', category: 'View', icon: L.SunMoon, keywords: 'dark mode light mode appearance', run: () => {
-      app.prefs.theme = app.prefs.theme === 'dark' ? 'light' : 'dark';
-      app.savePrefs();
-      app.applyTheme();
-      app.refreshAll();
+    a({ id: 'view.theme', title: 'Switch light / dark theme', category: 'View', icon: L.SunMoon, keywords: 'dark mode light mode appearance', run: () => app.settings.set('appearance.theme', app.isDark ? 'light' : 'dark') });
+    a({ id: 'view.adaptColors', title: 'Dark-friendly cell colors', category: 'View', icon: L.Palette, keywords: 'true colors contrast', checked: () => app.settings.bool('appearance.adaptColors'), run: () => {
+      const on = !app.settings.bool('appearance.adaptColors');
+      app.settings.set('appearance.adaptColors', on);
+      toast(on ? 'Light cell colors are softened in dark mode for readability (files are unchanged).' : 'Showing cell colors exactly as stored.');
     } });
-    a({ id: 'view.adaptColors', title: 'Dark-friendly cell colors', category: 'View', icon: L.Palette, keywords: 'true colors contrast', checked: () => app.prefs.adaptColors, run: () => {
-      app.prefs.adaptColors = !app.prefs.adaptColors;
-      app.savePrefs();
-      app.applyTheme();
-      toast(app.prefs.adaptColors ? 'Light cell colors are softened in dark mode for readability (files are unchanged).' : 'Showing cell colors exactly as stored.');
-    } });
+    const settingToggle = (id: string, setting: string, title: string, icon: IconNode, keywords?: string) =>
+      a({ id, title, category: 'View', icon, keywords, checked: () => app.settings.bool(setting), run: () => app.settings.set(setting, !app.settings.bool(setting)) });
+    settingToggle('view.headings', 'grid.headings', 'Show row and column headings', L.PanelTopDashed, 'headers A B C 1 2 3');
+    settingToggle('view.formulaBar', 'appearance.showFormulaBar', 'Show formula bar', L.SquareFunction);
+    settingToggle('view.statusBar', 'appearance.showStatusBar', 'Show status bar', L.PanelBottom);
+    settingToggle('grid.crosshair', 'grid.crosshair', 'Highlight the active row and column', L.Crosshair, 'reading guide crosshair');
+    a({ id: 'view.zoomSelection', title: 'Zoom to selection', category: 'View', icon: L.Scan, run: () => app.zoomToSelection() });
+    a({ id: 'view.ribbonFull', title: 'Ribbon: full', category: 'View', icon: L.PanelTop, keywords: 'toolbar size', checked: () => app.settings.str('ribbon.size') === 'full', run: () => app.ribbon.setSize('full') });
+    a({ id: 'view.ribbonCompact', title: 'Ribbon: compact (one row)', category: 'View', icon: L.Rows2, keywords: 'toolbar size', checked: () => app.settings.str('ribbon.size') === 'compact', run: () => app.ribbon.setSize('compact') });
+    a({ id: 'view.ribbonTabs', title: 'Ribbon: tabs only', category: 'View', keys: ['Ctrl+F1'], icon: L.PanelTopClose, keywords: 'toolbar collapse hide', checked: () => app.settings.str('ribbon.size') === 'tabs', run: () => app.ribbon.setSize(app.settings.str('ribbon.size') === 'tabs' ? 'full' : 'tabs') });
+
+    // ---------- Gridline ----------
+    a({ id: 'app.settings', title: 'Settings', category: 'Gridline', keys: ['Ctrl+,'], icon: L.Settings, keywords: 'preferences options customize', global: true, run: () => app.openSettings() });
+    a({ id: 'app.settingsLive', title: 'Live data settings', category: 'Gridline', icon: L.Settings2, keywords: 'nfl stocks offline refresh', run: () => app.openSettings('live') });
+    a({ id: 'help.updates', title: 'Check for updates', category: 'Gridline', icon: L.RefreshCw, keywords: 'new version upgrade', run: () => app.updates.check(false) });
+    a({ id: 'help.whatsNew', title: "What's new in this version", category: 'Gridline', icon: L.Gift, keywords: 'release notes changelog', run: () => app.updates.showWhatsNew() });
+    a({ id: 'file.newWindow', title: 'New window', category: 'File', keys: ['Ctrl+Shift+N'], icon: L.AppWindow, global: true, run: () => platform.newWindow() });
     a({ id: 'view.palette', title: 'Search commands', category: 'View', keys: ['Ctrl+K', 'Ctrl+Shift+P', 'F1'], icon: L.Command, global: true, hidden: true, run: () => openPalette(app) });
 
     // ---------- Rows & columns ----------
@@ -355,7 +384,7 @@ export class Commands {
     // ---------- Sheets ----------
     a({ id: 'sheet.add', title: 'New sheet', category: 'Sheet', keys: ['Shift+F11'], icon: L.Plus, run: () => {
       const idx = app.doc.wb.sheets.indexOf(sheet()) + 1;
-      const tx = app.transact('Add sheet', (tx) => addSheet(tx, app.doc.wb, undefined, idx));
+      const tx = app.transact('Add sheet', (tx) => app.applySheetDefaults(addSheet(tx, app.doc.wb, app.nextSheetName(), idx)));
       if (tx) app.setActiveSheet(app.doc.wb.activeSheetId);
     } });
     a({ id: 'sheet.next', title: 'Next sheet', category: 'Sheet', keys: ['Ctrl+PageDown'], icon: L.ArrowRight, global: true, run: () => cycleSheet(app, 1) });
@@ -419,12 +448,12 @@ function insertNow(app: App, what: 'date' | 'time'): void {
 function toggleFormatPainter(app: App): void {
   if (app.formatPainter) {
     app.formatPainter = null;
-    app.toolbar.refresh();
+    app.ribbon.refresh();
     return;
   }
   app.formatPainter = { sheetId: app.sheet.id, range: { ...app.sel.range }, sticky: false };
   app.statusbar.flash('Select the cells to paint the formatting onto');
-  app.toolbar.refresh();
+  app.ribbon.refresh();
 }
 
 async function editNote(app: App): Promise<void> {
@@ -596,6 +625,9 @@ function insertChart(app: App, type: ChartType): void {
   // Place the chart next to the data, below any frozen rows so it scrolls with the sheet
   const anchorRow = Math.max(region.r1, app.sheet.freeze.rows);
   const chart = createChart(app.doc, app.sheet, region, type, anchorRow, anchorCol);
+  chart.legend = app.settings.str('charts.legend') as typeof chart.legend;
+  const size = { small: [400, 250], medium: [520, 320], large: [680, 420] }[app.settings.str('charts.size')] ?? [520, 320];
+  chart.anchor = { ...chart.anchor, w: size[0], h: size[1] };
   const tx = app.transact('Insert chart', (tx) => tx.setProp(app.sheet, 'charts', [...app.sheet.charts, chart]));
   if (tx) {
     app.charts.select(chart.id);

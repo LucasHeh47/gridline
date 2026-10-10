@@ -488,11 +488,13 @@ function portfolio(): Workbook {
   });
 }
 
-function nfl(): Workbook {
+function nfl(prefs: TemplatePrefs): Workbook {
   const season = currentSeason();
+  const team = prefs.team || 'Chiefs';
+  const fantasyStat = prefs.fantasyStat || 'Fantasy Points PPR';
   return build(['My team', 'Standings', 'QB compare', 'Fantasy'], (t, st, qb, fan) => {
     t.set('A1', 'NFL Season Tracker').style('A1', C.title);
-    t.row('A2', ['Team', 'Chiefs']).row('A3', ['Season', season]).style('B2:B3', { ...C.input, hAlign: 'left', bold: true });
+    t.row('A2', ['Team', team]).row('A3', ['Season', season]).style('B2:B3', { ...C.input, hAlign: 'left', bold: true });
     t.note('B2', 'Type any team: "Lions", "DAL", "Green Bay"…');
     t.set('A5', '=NFL.SCHEDULE(B2, B3)');
     t.style('A5:G5', C.header);
@@ -537,7 +539,7 @@ function nfl(): Workbook {
     qb.sheet.tabColor = '#ff9f43';
 
     fan.set('A1', 'Fantasy Points by Week').style('A1', C.title);
-    fan.row('A2', ['Season', season]).row('A3', ['Scoring', 'Fantasy Points PPR']).style('B2:B3', { ...C.input, hAlign: 'left', bold: true });
+    fan.row('A2', ['Season', season]).row('A3', ['Scoring', fantasyStat]).style('B2:B3', { ...C.input, hAlign: 'left', bold: true });
     fan.note('B3', 'Use "Fantasy Points" (standard), "Fantasy Points Half PPR" or "Fantasy Points PPR".');
     const weeks = Array.from({ length: 18 }, (_, i) => i + 1);
     const lastWeekCol = colToName(weeks.length);
@@ -559,8 +561,16 @@ function nfl(): Workbook {
   });
 }
 
-const BUILDERS: Record<string, () => Workbook> = { budget, loan, debt, networth, portfolio, nfl };
+/** Personal defaults used by some templates. */
+export interface TemplatePrefs {
+  /** NFL team nickname, e.g. "Lions". */
+  team?: string;
+  /** Stat used for weekly fantasy points. */
+  fantasyStat?: string;
+}
 
-export function buildTemplate(id: string): Workbook | null {
-  return BUILDERS[id]?.() ?? null;
+const BUILDERS: Record<string, (prefs: TemplatePrefs) => Workbook> = { budget, loan, debt, networth, portfolio, nfl };
+
+export function buildTemplate(id: string, prefs: TemplatePrefs = {}): Workbook | null {
+  return BUILDERS[id]?.(prefs) ?? null;
 }

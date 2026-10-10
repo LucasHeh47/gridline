@@ -1,4 +1,5 @@
 // Cell editing operations: input, clearing, styling, borders, merging.
+import { config } from '../config';
 import { cellKey, isFullColumn, isFullRow, keyCol, keyRow, rangesIntersect, type Range } from '../address';
 import type { Doc } from '../doc';
 import { normalizeFuncName } from '../formula/parser';
@@ -105,7 +106,7 @@ export function setCellInput(tx: Transaction, doc: Doc, sheet: Sheet, row: numbe
   } else {
     if (parsed.value !== null && parsed.value !== undefined) next.v = parsed.value;
     if (parsed.numFmt) next.s = wb.styles.apply(next.s, { numFmt: parsed.numFmt });
-    if (typeof parsed.value === 'string' && /^https?:\/\/\S+$/i.test(parsed.value.trim())) next.link = parsed.value.trim();
+    if (config.autoLinkUrls && typeof parsed.value === 'string' && /^https?:\/\/\S+$/i.test(parsed.value.trim())) next.link = parsed.value.trim();
     else if (cell?.link && cell.v !== parsed.value) delete next.link;
   }
   if (typeof parsed.value === 'string' && parsed.value.includes('\n')) {

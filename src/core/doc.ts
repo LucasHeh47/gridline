@@ -120,6 +120,12 @@ export class Doc {
     return tx;
   }
 
+  /** Recalculates NOW(), TODAY(), RAND() and what depends on them. */
+  recalcVolatile(): void {
+    this.engine.recalc();
+    this.emit({ type: 'data' });
+  }
+
   /** Forces a full recalculation (F9). */
   recalcAll(): void {
     this.engine.rebuild();

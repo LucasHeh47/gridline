@@ -30,8 +30,9 @@ export class ChartLayer {
   private theme(): ChartTheme {
     const cs = getComputedStyle(document.documentElement);
     const v = (n: string) => cs.getPropertyValue(n).trim();
-    const dark = this.app.prefs.theme === 'dark';
-    return { dark, bg: v('--panel'), text: v('--text'), muted: v('--text-muted'), grid: dark ? '#2a2f38' : '#e6e8ec', axis: dark ? '#4a5262' : '#b6bcc7' };
+    const dark = this.app.isDark;
+    const s = this.app.settings;
+    return { dark, bg: v('--panel'), text: v('--text'), muted: v('--text-muted'), grid: dark ? '#2a2f38' : '#e6e8ec', axis: dark ? '#4a5262' : '#b6bcc7', gridlines: s.bool('charts.gridlines'), piePercent: s.bool('charts.piePercent') };
   }
 
   /** Creates/removes chart boxes to match the active sheet. */
@@ -125,7 +126,7 @@ export class ChartLayer {
     const version = this.app.doc.engine.version;
     for (const box of this.boxes.values()) {
       const a = box.def.anchor;
-      const key = `${version}|${this.app.prefs.theme}|${a.w}x${a.h}|${JSON.stringify({ ...box.def, anchor: null })}`;
+      const key = `${version}|${theme.dark}|${theme.gridlines}|${theme.piePercent}|${this.app.settings.str('charts.palette')}|${a.w}x${a.h}|${JSON.stringify({ ...box.def, anchor: null })}`;
       if (!force && key === box.renderedKey) continue;
       box.renderedKey = key;
       try {

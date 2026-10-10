@@ -6,7 +6,21 @@ import { formatValue, isDateFormat } from './numfmt';
 import type { Scalar } from './values';
 import type { ChartDef, ChartSeries, ChartType, Sheet } from './workbook';
 
-export const CHART_COLORS = ['#4ea1ff', '#ff9f43', '#3fcf8e', '#e8618c', '#a78bfa', '#ffd43b', '#22b8cf', '#ff6b6b', '#94d82d', '#c4a7ff'];
+const PALETTES: Record<string, string[]> = {
+  gridline: ['#4ea1ff', '#ff9f43', '#3fcf8e', '#e8618c', '#a78bfa', '#ffd43b', '#22b8cf', '#ff6b6b', '#94d82d', '#c4a7ff'],
+  office: ['#4472c4', '#ed7d31', '#a5a5a5', '#ffc000', '#5b9bd5', '#70ad47', '#264478', '#9e480e', '#636363', '#997300'],
+  colorblind: ['#0072b2', '#e69f00', '#009e73', '#cc79a7', '#56b4e9', '#d55e00', '#f0e442', '#000000', '#999999', '#88ccee'],
+  pastel: ['#a0c4ff', '#ffc6a5', '#b9fbc0', '#ffadad', '#cdb4db', '#fdffb6', '#9bf6ff', '#ffd6e0', '#caffbf', '#bdb2ff'],
+  vivid: ['#0066ff', '#ff3d00', '#00c853', '#d500f9', '#ffab00', '#00b8d4', '#ff1744', '#64dd17', '#651fff', '#ff6d00'],
+  mono: ['#1e4e8c', '#2f6fbf', '#4a8fe0', '#73abed', '#9cc5f4', '#c3dcf8', '#163a68', '#5b9be6', '#86b8f0', '#b0d1f6'],
+};
+
+/** Series colors, in order. Changed in place by setChartPalette so every importer sees the update. */
+export const CHART_COLORS = [...PALETTES.gridline];
+
+export function setChartPalette(name: string): void {
+  CHART_COLORS.splice(0, CHART_COLORS.length, ...(PALETTES[name] ?? PALETTES.gridline));
+}
 
 function absRange(sheet: Sheet, r1: number, c1: number, r2: number, c2: number): string {
   const a = formatCell(r1, c1, true, true);

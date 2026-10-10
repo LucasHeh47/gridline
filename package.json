@@ -1,12 +1,16 @@
 {
   "name": "gridline",
   "productName": "Gridline",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A fast, simple, dark-mode spreadsheet app that opens and saves .xlsx and .csv files.",
   "main": "dist-electron/main.js",
   "private": true,
   "author": "LucasHeh47",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LucasHeh47/gridline.git"
+  },
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json && vite build && node scripts/build-electron.mjs",
@@ -14,12 +18,14 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
     "dist": "npm run build && electron-builder --win",
-    "dist:dir": "npm run build && electron-builder --win --dir"
+    "dist:dir": "npm run build && electron-builder --win --dir",
+    "release": "npm run build && electron-builder --win --publish always"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
     "electron": "^44.7.0",
     "electron-builder": "^26.15.3",
+    "electron-updater": "^6.8.9",
     "exceljs": "^4.4.0",
     "jszip": "^3.10.2",
     "lucide": "^1.55.0",
@@ -42,6 +48,14 @@
       "package.json"
     ],
     "asar": true,
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "LucasHeh47",
+        "repo": "gridline",
+        "releaseType": "release"
+      }
+    ],
     "win": {
       "target": [
         {
