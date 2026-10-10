@@ -1,0 +1,101 @@
+{
+  "name": "gridline",
+  "productName": "Gridline",
+  "version": "1.0.0",
+  "description": "A fast, simple, dark-mode spreadsheet app that opens and saves .xlsx and .csv files.",
+  "main": "dist-electron/main.js",
+  "private": true,
+  "author": "LucasHeh47",
+  "license": "MIT",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json && vite build && node scripts/build-electron.mjs",
+    "start": "npm run build && electron .",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.electron.json",
+    "dist": "npm run build && electron-builder --win",
+    "dist:dir": "npm run build && electron-builder --win --dir"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "exceljs": "^4.4.0",
+    "jszip": "^3.10.2",
+    "lucide": "^1.55.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3"
+  },
+  "build": {
+    "appId": "com.gridline.app",
+    "productName": "Gridline",
+    "copyright": "Gridline",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "build/icon.png",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Gridline",
+      "artifactName": "Gridline-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Gridline-Portable-${version}.${ext}"
+    },
+    "fileAssociations": [
+      {
+        "ext": "xlsx",
+        "name": "Excel Workbook",
+        "description": "Excel workbook",
+        "role": "Editor",
+        "icon": "build/icon.ico"
+      },
+      {
+        "ext": "csv",
+        "name": "CSV File",
+        "description": "Comma-separated values",
+        "role": "Editor",
+        "icon": "build/icon.ico"
+      },
+      {
+        "ext": "tsv",
+        "name": "TSV File",
+        "description": "Tab-separated values",
+        "role": "Editor",
+        "icon": "build/icon.ico"
+      }
+    ],
+    "electronLanguages": [
+      "en-US"
+    ]
+  }
+}

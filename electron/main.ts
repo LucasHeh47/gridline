@@ -1,0 +1,340 @@
+// Electron main process: windows, native dialogs, file access and the clipboard.
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, net, shell, type IpcMainInvokeEvent } from 'electron';
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
+const DEV_URL = process.env.VITE_DEV_SERVER_URL;
+const SMOKE_SCREENSHOT = process.env.GRIDLINE_SCREENSHOT;
+const SUPPORTED = /\.(xlsx|xlsm|csv|tsv|txt)$/i;
+
+/** Paths the UI may read or write: chosen in a dialog, passed on the command line, dropped, or recent. */
+const allowedPaths = new Set<string>();
+const dirty = new Map<number, boolean>();
+const closing = new Set<number>();
+
+function allow(p: string): string {
+  const full = path.resolve(p);
+  allowedPaths.add(full.toLowerCase());
+  return full;
+}
+
+function isAllowed(p: string): boolean {
+  return allowedPaths.has(path.resolve(p).toLowerCase());
+}
+
+// ---------- recent files ----------
+
+const recentPath = () => path.join(app.getPath('userData'), 'recent.json');
+interface Recent {
+  path: string;
+  name: string;
+  openedAt: number;
+}
+
+async function readRecent(): Promise<Recent[]> {
+  try {
+    const list = JSON.parse(await fs.readFile(recentPath(), 'utf8')) as Recent[];
+    return list.filter((r) => typeof r.path === 'string' && existsSync(r.path));
+  } catch {
+    return [];
+  }
+}
+
+async function addRecent(p: string): Promise<void> {
+  const list = (await readRecent()).filter((r) => r.path.toLowerCase() !== p.toLowerCase());
+  list.unshift({ path: p, name: path.basename(p), openedAt: Date.now() });
+  await fs.mkdir(app.getPath('userData'), { recursive: true });
+  await fs.writeFile(recentPath(), JSON.stringify(list.slice(0, 12), null, 2));
+  app.addRecentDocument(p);
+}
+
+// ---------- windows ----------
+
+function filesFromArgv(argv: string[]): string[] {
+  return argv.slice(1).filter((a) => !a.startsWith('-') && SUPPORTED.test(a) && existsSync(a));
+}
+
+function createWindow(filePath?: string, template?: string): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    minWidth: 720,
+    minHeight: 460,
+    show: false,
+    backgroundColor: '#121417',
+    title: 'Gridline',
+    icon: path.join(__dirname, '..', 'build', 'icon.png'),
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#16181d', symbolColor: '#c9ced8', height: 40 },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      spellcheck: false,
+    },
+  });
+  const id = win.webContents.id;
+  if (filePath) allow(filePath);
+  const query: Record<string, string> | undefined = filePath ? { file: path.resolve(filePath) } : template ? { template } : undefined;
+  if (DEV_URL) win.loadURL(DEV_URL + (query ? `?${new URLSearchParams(query)}` : ''));
+  else win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { query });
+
+  win.once('ready-to-show', () => {
+    win.show();
+    if (SMOKE_SCREENSHOT) {
+      setTimeout(async () => {
+        const img = await win.webContents.capturePage();
+        await fs.writeFile(SMOKE_SCREENSHOT, img.toPNG());
+        app.exit(0);
+      }, Number(process.env.GRIDLINE_SCREENSHOT_DELAY ?? 2500));
+    }
+  });
+  win.on('close', (e) => {
+    if (dirty.get(id) && !closing.has(id)) {
+      e.preventDefault();
+      win.webContents.send('app:request-close');
+    }
+  });
+  win.on('closed', () => {
+    dirty.delete(id);
+    closing.delete(id);
+  });
+  // Never navigate away from the app; open links in the default browser.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^(https?:|mailto:)/i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (e, url) => {
+    if (url !== win.webContents.getURL()) e.preventDefault();
+  });
+  win.webContents.on('before-input-event', (_e, input) => {
+    if (input.type === 'keyDown' && input.key === 'F12' && DEV_URL) win.webContents.toggleDevTools();
+  });
+  return win;
+}
+
+const senderWindow = (e: IpcMainInvokeEvent | Electron.IpcMainEvent) => BrowserWindow.fromWebContents(e.sender);
+
+// ---------- IPC ----------
+
+async function readFileFor(p: string) {
+  const full = allow(p);
+  const data = await fs.readFile(full);
+  await addRecent(full);
+  return { path: full, name: path.basename(full), data: new Uint8Array(data) };
+}
+
+ipcMain.handle('file:open-dialog', async (e) => {
+  const win = senderWindow(e);
+  const res = await dialog.showOpenDialog(win!, {
+    title: 'Open spreadsheet',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Spreadsheets', extensions: ['xlsx', 'xlsm', 'csv', 'tsv', 'txt'] },
+      { name: 'Excel workbook', extensions: ['xlsx', 'xlsm'] },
+      { name: 'CSV / TSV', extensions: ['csv', 'tsv', 'txt'] },
+    ],
+  });
+  if (res.canceled || !res.filePaths[0]) return null;
+  return readFileFor(res.filePaths[0]);
+});
+
+ipcMain.handle('file:open-path', async (_e, p: string) => {
+  if (typeof p !== 'string') return null;
+  const recent = await readRecent();
+  if (!isAllowed(p) && !recent.some((r) => r.path.toLowerCase() === path.resolve(p).toLowerCase())) {
+    throw new Error('That file can only be opened from the Open dialog.');
+  }
+  return readFileFor(p);
+});
+
+ipcMain.handle('file:grant', async (_e, p: string) => {
+  if (typeof p === 'string' && p && SUPPORTED.test(p)) {
+    const full = allow(p);
+    await addRecent(full);
+    return full;
+  }
+  return null;
+});
+
+ipcMain.handle('file:save-dialog', async (e, defaultName: string, kind: string) => {
+  const win = senderWindow(e);
+  const filters =
+    kind === 'csv'
+      ? [{ name: 'CSV (comma-separated)', extensions: ['csv'] }]
+      : kind === 'tsv'
+        ? [{ name: 'Tab-separated text', extensions: ['tsv', 'txt'] }]
+        : [{ name: 'Excel workbook', extensions: ['xlsx'] }];
+  const res = await dialog.showSaveDialog(win!, { title: 'Save as', defaultPath: defaultName, filters });
+  if (res.canceled || !res.filePath) return null;
+  return allow(res.filePath);
+});
+
+ipcMain.handle('file:save', async (_e, p: string, data: Uint8Array) => {
+  if (!isAllowed(p)) return { ok: false, error: 'Gridline isn\'t allowed to write to that location. Use Save As.' };
+  const full = path.resolve(p);
+  const tmp = `${full}.gridline-${process.pid}.tmp`;
+  try {
+    // Write to a temporary file first so a crash can't leave a half-written spreadsheet.
+    await fs.writeFile(tmp, Buffer.from(data));
+    await fs.rename(tmp, full);
+    await addRecent(full);
+    return { ok: true };
+  } catch (err) {
+    await fs.rm(tmp, { force: true }).catch(() => undefined);
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
+      return { ok: false, error: 'The file is locked — it may be open in another program (like Excel). Close it there and try again, or use Save As.' };
+    }
+    return { ok: false, error: (err as Error).message };
+  }
+});
+
+ipcMain.handle('file:recent', async () => {
+  const list = await readRecent();
+  for (const r of list) allow(r.path);
+  return list;
+});
+
+ipcMain.handle('file:clear-recent', async () => {
+  await fs.writeFile(recentPath(), '[]').catch(() => undefined);
+  app.clearRecentDocuments();
+});
+
+ipcMain.handle('clipboard:read', async () => {
+  const text = await clipboard.readText();
+  let html = '';
+  try {
+    for (const item of await clipboard.read()) {
+      if (!item.types.includes('text/html')) continue;
+      const blob = await item.getType('text/html');
+      html = typeof blob === 'string' ? blob : await (blob as Blob).text();
+      break;
+    }
+  } catch {
+    // HTML is optional
+  }
+  return { text, html };
+});
+ipcMain.handle('clipboard:write', async (_e, d: { text: string; html?: string }) => {
+  const entries: Record<string, string> = { 'text/plain': String(d?.text ?? '') };
+  if (d?.html) entries['text/html'] = String(d.html);
+  await clipboard.write([new ClipboardItem(entries)]);
+});
+
+ipcMain.on('win:set-title', (e, title: string) => senderWindow(e)?.setTitle(String(title)));
+ipcMain.on('win:set-dirty', (e, value: boolean) => {
+  const win = senderWindow(e);
+  dirty.set(e.sender.id, !!value);
+  win?.setDocumentEdited?.(!!value);
+});
+ipcMain.on('win:set-theme', (e, t: { dark: boolean; bar: string; symbol: string }) => {
+  const win = senderWindow(e);
+  try {
+    win?.setTitleBarOverlay?.({ color: t.bar, symbolColor: t.symbol, height: 40 });
+    win?.setBackgroundColor(t.dark ? '#121417' : '#ffffff');
+  } catch {
+    // not supported on this platform
+  }
+});
+ipcMain.on('win:new', (_e, p?: string, template?: unknown) => {
+  if (p && !isAllowed(p)) return;
+  createWindow(p, typeof template === 'string' && /^[a-z-]{1,32}$/.test(template) ? template : undefined);
+});
+ipcMain.on('win:confirm-close', (e) => {
+  closing.add(e.sender.id);
+  senderWindow(e)?.close();
+});
+ipcMain.on('win:devtools', (e) => e.sender.toggleDevTools());
+ipcMain.on('shell:open-external', (_e, url: string) => {
+  if (typeof url === 'string' && /^(https?:|mailto:)/i.test(url)) shell.openExternal(url);
+});
+ipcMain.on('shell:show-in-folder', (_e, p: string) => {
+  if (typeof p === 'string' && isAllowed(p)) shell.showItemInFolder(p);
+});
+ipcMain.handle('app:version', () => app.getVersion());
+
+// ---------- live data (NFL stats, prices, exchange rates) ----------
+
+/** Only these sites can be contacted, and only over HTTPS. */
+const DATA_HOSTS = new Set(['github.com', 'raw.githubusercontent.com', 'api.frankfurter.dev', 'api.coinbase.com', 'query1.finance.yahoo.com', 'query2.finance.yahoo.com']);
+const cacheDir = () => path.join(app.getPath('userData'), 'data-cache');
+
+ipcMain.handle('net:fetch', async (_e, url: string, opts: { maxAgeSec?: number; headers?: Record<string, string> }) => {
+  let u: URL;
+  try {
+    u = new URL(String(url));
+  } catch {
+    return { ok: false, status: 0, error: 'Invalid address' };
+  }
+  if (u.protocol !== 'https:' || !DATA_HOSTS.has(u.hostname)) return { ok: false, status: 0, error: `Gridline doesn't download data from ${u.hostname}.` };
+  const file = path.join(cacheDir(), createHash('sha1').update(u.href).digest('hex') + '.txt');
+  const maxAge = Math.max(0, Number(opts?.maxAgeSec ?? 0)) * 1000;
+  let cached: { text: string; age: number } | null = null;
+  try {
+    const st = await fs.stat(file);
+    cached = { text: await fs.readFile(file, 'utf8'), age: Date.now() - st.mtimeMs };
+  } catch {
+    // not cached yet
+  }
+  if (cached && cached.age < maxAge) return { ok: true, status: 200, text: cached.text, cached: true };
+  try {
+    const headers: Record<string, string> = {};
+    for (const [k, v] of Object.entries(opts?.headers ?? {})) if (/^(user-agent|accept)$/i.test(k)) headers[k] = String(v);
+    const res = await net.fetch(u.href, { headers, redirect: 'follow' });
+    if (!res.ok) {
+      // A stale copy beats nothing (e.g. offline or rate limited)
+      if (cached && res.status !== 404) return { ok: true, status: 200, text: cached.text, cached: true, stale: true };
+      return { ok: false, status: res.status, error: `HTTP ${res.status}` };
+    }
+    const text = await res.text();
+    await fs.mkdir(cacheDir(), { recursive: true });
+    await fs.writeFile(file, text, 'utf8');
+    return { ok: true, status: 200, text };
+  } catch (err) {
+    if (cached) return { ok: true, status: 200, text: cached.text, cached: true, stale: true };
+    return { ok: false, status: 0, error: (err as Error).message || 'No internet connection' };
+  }
+});
+
+ipcMain.handle('net:clear-cache', async () => {
+  await fs.rm(cacheDir(), { recursive: true, force: true }).catch(() => undefined);
+});
+
+// ---------- lifecycle ----------
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', (_e, argv) => {
+    const files = filesFromArgv(argv);
+    if (files.length) for (const f of files) createWindow(f);
+    else {
+      const win = BrowserWindow.getAllWindows()[0];
+      if (win) {
+        if (win.isMinimized()) win.restore();
+        win.focus();
+      } else createWindow();
+    }
+  });
+
+  app.whenReady().then(() => {
+    Menu.setApplicationMenu(null);
+    app.setAppUserModelId('com.gridline.app');
+    const files = filesFromArgv(process.argv);
+    if (process.env.GRIDLINE_OPEN && existsSync(process.env.GRIDLINE_OPEN)) files.push(process.env.GRIDLINE_OPEN);
+    const startTemplate = process.env.GRIDLINE_TEMPLATE;
+    if (files.length) for (const f of files) createWindow(f);
+    else createWindow(undefined, startTemplate && /^[a-z-]{1,32}$/.test(startTemplate) ? startTemplate : undefined);
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
+}
