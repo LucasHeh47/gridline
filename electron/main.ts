@@ -359,7 +359,7 @@ ipcMain.handle('net:cache-size', async () => {
 });
 
 setupUpdates();
-setupAi();
+setupAi(DEV_URL);
 
 // ---------- lifecycle ----------
 

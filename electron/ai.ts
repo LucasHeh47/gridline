@@ -1,20 +1,46 @@
 // The AI assistant's connection to a model. Runs in the main process so the API key never reaches
 // the page: the key is stored encrypted with the operating system's keychain (safeStorage), and
 // requests stream back to the window as events.
+// Keeping the key secret:
+//  • the page can save or remove the key and ask whether one is saved, but never read it back;
+//  • it is only ever sent to api.anthropic.com over HTTPS, and redirects are refused so the header
+//    can't follow a response anywhere else;
+//  • messages passed back to the page are scrubbed of anything that looks like a key;
+//  • only the app's own page may use these channels.
 //  • Claude: Anthropic's Messages API with the user's own key.
 //  • Local: any OpenAI-compatible server on the PC (Ollama, LM Studio).
-import { app, ipcMain, net, safeStorage, type WebContents } from 'electron';
+import { app, ipcMain, net, safeStorage, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { AiBlock, AiEvent, AiMessage, AiRequest, AiToolDef } from '../src/shared/api';
+import { redactSecrets, validKeyFormat } from '../src/shared/secrets';
 
 const keyPath = () => path.join(app.getPath('userData'), 'ai-key.bin');
 const running = new Map<string, AbortController>();
 
-/** Test server for the Claude API (http://127.0.0.1 only), e.g. GRIDLINE_AI_TEST_URL=http://127.0.0.1:8124 */
+/**
+ * Where Claude requests go. Development runs (not the installed app) may point them at a local test
+ * server with GRIDLINE_AI_TEST_URL=http://127.0.0.1:8124; installed copies always use Anthropic.
+ */
 function claudeBase(): string {
   const t = process.env.GRIDLINE_AI_TEST_URL;
-  return t && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/.test(t) ? t.replace(/\/$/, '') : 'https://api.anthropic.com';
+  if (!app.isPackaged && t && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/?$/.test(t)) return t.replace(/\/$/, '');
+  return 'https://api.anthropic.com';
+}
+
+let devUrl: string | undefined;
+
+/** True for messages from the app's own page (not another site or an embedded frame). */
+function fromApp(e: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  const frame = e.senderFrame;
+  if (!frame || frame !== e.sender.mainFrame) return false;
+  if (devUrl) return frame.url.startsWith(devUrl);
+  try {
+    const u = new URL(frame.url);
+    return u.protocol === 'file:' && decodeURIComponent(u.pathname).replace(/\\/g, '/').endsWith('/dist/index.html');
+  } catch {
+    return false;
+  }
 }
 
 async function readKey(): Promise<string | null> {
@@ -26,8 +52,11 @@ async function readKey(): Promise<string | null> {
   }
 }
 
-function send(target: WebContents, id: string, e: AiEvent): void {
-  if (!target.isDestroyed()) target.send('ai:event', id, e);
+function send(target: WebContents, id: string, e: AiEvent, key?: string | null): void {
+  if (target.isDestroyed()) return;
+  // Error text can include what a server echoed back: never let a key through
+  if (e.type === 'error') e = { type: 'error', message: redactSecrets(e.message, key) };
+  target.send('ai:event', id, e);
 }
 
 /** Reads a server-sent-events stream, calling `onEvent` with each event's name and data. */
@@ -90,14 +119,23 @@ async function chatClaude(target: WebContents, id: string, req: AiRequest, signa
     tools,
     messages: req.messages,
   };
-  const res = await net.fetch(`${claudeBase()}/v1/messages`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify(body),
-    signal,
-  });
+  let res: Response;
+  try {
+    res = await net.fetch(`${claudeBase()}/v1/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify(body),
+      // Never follow a redirect: the key header would go along to the new address
+      redirect: 'error',
+      signal,
+    });
+  } catch (err) {
+    if (signal.aborted) throw err;
+    send(target, id, { type: 'error', message: `Couldn't reach Claude: ${(err as Error).message}` }, key);
+    return;
+  }
   if (!res.ok) {
-    send(target, id, { type: 'error', message: await errorText(res, 'claude') });
+    send(target, id, { type: 'error', message: await errorText(res, 'claude') }, key);
     return;
   }
   const blocks = new Map<number, { type: string; id?: string; name?: string; json: string }>();
@@ -141,7 +179,7 @@ async function chatClaude(target: WebContents, id: string, req: AiRequest, signa
         usage.output = j.usage?.output_tokens ?? usage.output;
         break;
       case 'error':
-        send(target, id, { type: 'error', message: j.error?.message ?? 'The AI service reported an error.' });
+        send(target, id, { type: 'error', message: j.error?.message ?? 'The AI service reported an error.' }, key);
         break;
     }
   });
@@ -231,8 +269,10 @@ async function chatLocal(target: WebContents, id: string, req: AiRequest, signal
 
 // ---------- IPC ----------
 
-export function setupAi(): void {
+export function setupAi(devServerUrl?: string): void {
+  devUrl = devServerUrl;
   ipcMain.handle('ai:chat', async (e, id: string, req: AiRequest) => {
+    if (!fromApp(e) || typeof id !== 'string') return;
     const ctl = new AbortController();
     running.set(id, ctl);
     try {
@@ -245,22 +285,31 @@ export function setupAi(): void {
       running.delete(id);
     }
   });
-  ipcMain.on('ai:cancel', (_e, id: string) => running.get(id)?.abort());
-  ipcMain.handle('ai:set-key', async (_e, key: string | null) => {
+  ipcMain.on('ai:cancel', (e, id: string) => {
+    if (fromApp(e)) running.get(id)?.abort();
+  });
+  ipcMain.handle('ai:set-key', async (e, key: string | null) => {
+    if (!fromApp(e)) return { ok: false, error: 'Not allowed.' };
     try {
       if (!key) {
         await fs.rm(keyPath(), { force: true });
         return { ok: true };
       }
-      if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: "This computer can't store the key securely." };
-      await fs.writeFile(keyPath(), safeStorage.encryptString(key.trim()));
+      const k = String(key).trim();
+      // Messages here never repeat the key
+      if (!validKeyFormat(k)) return { ok: false, error: "That doesn't look like an API key. Copy the whole key from console.anthropic.com and paste it again." };
+      if (!safeStorage.isEncryptionAvailable() || (process.platform === 'linux' && safeStorage.getSelectedStorageBackend() === 'basic_text')) {
+        return { ok: false, error: "This computer can't store the key securely, so it wasn't saved." };
+      }
+      await fs.writeFile(keyPath(), safeStorage.encryptString(k), { mode: 0o600 });
       return { ok: true };
-    } catch (err) {
-      return { ok: false, error: (err as Error).message };
+    } catch {
+      return { ok: false, error: "The key couldn't be saved." };
     }
   });
-  ipcMain.handle('ai:has-key', async () => !!(await readKey()));
-  ipcMain.handle('ai:local-models', async (_e, baseUrl: string) => {
+  ipcMain.handle('ai:has-key', async (e) => fromApp(e) && !!(await readKey()));
+  ipcMain.handle('ai:local-models', async (e, baseUrl: string) => {
+    if (!fromApp(e)) return { ok: false, models: [], error: 'Not allowed.' };
     try {
       const res = await net.fetch(`${baseUrlOf({ baseUrl })}/models`);
       if (!res.ok) return { ok: false, models: [], error: `The server answered ${res.status}.` };

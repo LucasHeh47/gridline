@@ -2,6 +2,7 @@
 // the model asks for (reads run at once and are logged; proposals wait for the user), and repeat
 // until the model answers. The model talks to us through a transport, so tests can script it.
 import type { AiBlock, AiEvent, AiMessage, AiProvider, AiRequest } from '../../shared/api';
+import { redactSecrets } from '../../shared/secrets';
 import type { Doc } from '../doc';
 import { previewChanges, type Change, type Preview } from './changes';
 import { runReadTool, TOOLS, type ProposalInput } from './tools';
@@ -62,6 +63,7 @@ How you work:
 - For questions like "why doesn't this total match", trace with describe_cell and compare with evaluate. Common causes: rows left out of a SUM range, numbers stored as text, duplicates, hidden or filtered rows, rounding, references to the wrong sheet, mismatched criteria.
 - For duplicates, decide what makes two rows the same (e.g. same date, amount and description), count them with COUNTIFS, and flag or highlight them; never delete rows unless asked.
 - For charts, build a small summary table with formulas when the data isn't already summarized, then chart that table.
+- Never ask for API keys, passwords or other secrets. Values that look like keys appear as [hidden API key]; leave those cells alone.
 - Dates are serial numbers in formulas (DATE, EOMONTH, TEXT work as in Excel); reads show them as displayed.
 - Changes and reads without a sheet name use the sheet the user is looking at; name the sheet whenever the workbook has more than one.
 - When explaining, refer to cells as Sheet!A1 (the user can click them). Be concise: short paragraphs or lists, no large tables in the chat. Don't describe your tool calls step by step — the user sees them.`;
@@ -93,7 +95,8 @@ export class Conversation {
       if (m.role !== 'user') continue;
       for (const b of m.content) if (b.type === 'text') b.text = b.text.replace(OVERVIEW_RE, '');
     }
-    this.messages.push({ role: 'user', content: [{ type: 'text', text: `<workbook>\n${this.hooks.overview()}\n</workbook>\n\n${text}` }] });
+    // Anything that looks like an API key (in the workbook or the message) is hidden from the model
+    this.messages.push({ role: 'user', content: [{ type: 'text', text: `<workbook>\n${redactSecrets(this.hooks.overview())}\n</workbook>\n\n${redactSecrets(text)}` }] });
     const maxSteps = opts.maxSteps ?? 30;
     try {
       for (let step = 0; step < maxSteps; step++) {
@@ -115,11 +118,11 @@ export class Conversation {
           if (call.name === 'propose_changes') {
             const r = await this.propose(input, signal);
             if (r.stopped) stopped = true;
-            results.push({ type: 'tool_result', tool_use_id: call.id, content: r.content, ...(r.isError ? { is_error: true } : {}) });
+            results.push({ type: 'tool_result', tool_use_id: call.id, content: redactSecrets(r.content), ...(r.isError ? { is_error: true } : {}) });
           } else {
             const r = runReadTool(this.doc, call.name, input, opts.maxCells);
             this.hooks.onRead(r.log, !!r.isError);
-            results.push({ type: 'tool_result', tool_use_id: call.id, content: r.content, ...(r.isError ? { is_error: true } : {}) });
+            results.push({ type: 'tool_result', tool_use_id: call.id, content: redactSecrets(r.content), ...(r.isError ? { is_error: true } : {}) });
           }
         }
         this.messages.push({ role: 'user', content: results });

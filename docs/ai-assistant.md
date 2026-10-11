@@ -70,8 +70,18 @@ It doesn't run macros, open other files or reach the internet.
 
 - With **Claude**, your request and the parts of the workbook the assistant reads are sent to Anthropic. Every read is listed in the chat, so you can see what was sent. Each request also includes a short overview of the workbook: sheet names and sizes, headings, the formulas in use, charts and rules.
 - **Settings → AI assistant → Most cells per read** limits how much one read can include (default 2,000 cells).
-- The Claude API key is encrypted with your computer's keychain and only sent to Anthropic. **Remove** deletes it from the computer.
 - With a **local model**, nothing leaves your computer.
+
+### Your API key stays secret
+
+- The key is encrypted with your computer's keychain (Windows Data Protection) and stored in Gridline's settings folder. If that file is copied to another computer or user account, it can't be decrypted there.
+- Once saved, the key is never shown again, and the Gridline window itself can't read it back. Only Gridline's background process uses it, to sign requests to Anthropic.
+- The key is only sent to `api.anthropic.com`, over HTTPS. If that address ever answered with a redirect, Gridline would stop rather than send the key anywhere else.
+- Error messages are checked, and anything that looks like a key is hidden before it's shown.
+- The key is never part of what the AI sees, and it isn't included in **Settings → Export**.
+- If you paste an API key into the chat by mistake, the message isn't sent.
+- If the workbook contains something that looks like an API key (Anthropic, OpenAI, GitHub, AWS, Google, Slack or Stripe), the AI sees `[hidden API key]` instead.
+- **Settings → AI assistant → Remove** deletes the key from the computer.
 
 ## Settings
 

@@ -7,6 +7,7 @@ import type { DocEvent } from '../../core/doc';
 import type { Transaction } from '../../core/history';
 import type { Workbook } from '../../core/workbook';
 import type { AiEvent } from '../../shared/api';
+import { containsSecret, HIDDEN, redactSecrets } from '../../shared/secrets';
 import type { App } from '../app';
 import { isDesktop, platform } from '../platform';
 
@@ -152,6 +153,10 @@ export class AiController {
   async send(text: string): Promise<void> {
     text = text.trim();
     if (!text || this.running) return;
+    if (containsSecret(text)) {
+      this.push({ kind: 'error', text: "That message contains an API key, so it wasn't sent. Keys never go in the chat: add yours in Settings → AI assistant, where it's stored encrypted.", action: 'key' });
+      return;
+    }
     if (this.app.doc.wb !== this.wb) this.newChat();
     this.running = true;
     this.current = null;
@@ -162,7 +167,7 @@ export class AiController {
       await this.conv.send(text, this.options(), ctl.signal);
     } catch (e) {
       const msg = e instanceof AgentError ? e.message : `Something went wrong: ${(e as Error).message || String(e)}`;
-      this.push({ kind: 'error', text: msg, action: /API key/i.test(msg) ? 'key' : /Settings/.test(msg) ? 'settings' : undefined });
+      this.push({ kind: 'error', text: msg, action: /API key/i.test(msg.split(HIDDEN).join('')) ? 'key' : /Settings/.test(msg) ? 'settings' : undefined });
     } finally {
       if (this.ctl === ctl) this.ctl = null;
       this.running = false;
@@ -220,7 +225,8 @@ export class AiController {
   }
 
   reject(item: ProposalItem, feedback?: string): void {
-    this.settle(item, 'rejected', { status: 'rejected', feedback: feedback?.trim() || undefined }, feedback?.trim() || undefined);
+    const f = feedback?.trim() ? redactSecrets(feedback.trim()) : undefined;
+    this.settle(item, 'rejected', { status: 'rejected', feedback: f }, f);
   }
 
   undo(item: ProposalItem): void {

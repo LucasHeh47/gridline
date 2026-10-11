@@ -101,5 +101,5 @@ Don't click **Restart and update** with a test feed unless you want that build i
 | --- | --- |
 | `GRIDLINE_TEMPLATE=<id>` | Opens a preset at startup, for example `budget` or `nfl` |
 | `GRIDLINE_OPEN=<path>` | Opens a file at startup |
-| `GRIDLINE_AI_TEST_URL=http://127.0.0.1:<port>` | Sends the AI assistant's Claude requests to a local test server instead of api.anthropic.com (localhost only) |
+| `GRIDLINE_AI_TEST_URL=http://127.0.0.1:<port>` | Sends the AI assistant's Claude requests to a local test server instead of api.anthropic.com. Localhost only, and ignored by installed copies, so a real key can only ever go to Anthropic |
 | `GRIDLINE_SCREENSHOT=<file.png>` | Saves a screenshot of the first window and quits (`GRIDLINE_SCREENSHOT_DELAY` sets the wait in ms) |

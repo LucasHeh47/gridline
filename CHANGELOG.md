@@ -6,7 +6,8 @@
   - **Works with the whole workbook**, not just what's on screen. It reads the sheets, formulas, charts, highlight rules and dropdowns it needs, and traces how cells depend on each other across sheets. Every read is listed in the chat.
   - **Nothing changes without your approval.** Changes come as proposals that show every cell that changes (before → after, with the formula), plus formula results elsewhere that would change. Click **Apply** or **Reject**, or tell it what to do instead.
   - **One-click undo.** Each applied change is a single step with an **Undo** button. The button still works after you've made other edits, and keeps any cells you changed yourself since.
-  - Use **Claude** with your own API key (stored encrypted on your computer), or a **model on your computer** with Ollama or LM Studio, so the workbook never leaves it. Choose in **Settings → AI assistant**.
+  - Use **Claude** with your own API key, or a **model on your computer** with Ollama or LM Studio, so the workbook never leaves it. Choose in **Settings → AI assistant**.
+  - **Your API key stays secret.** It's encrypted with your computer's keychain and never shown again. Only Gridline's background process uses it, and only to talk to Anthropic. Keys pasted into the chat aren't sent, and keys found in a workbook are hidden from the AI.
   - Cell addresses in answers are links that jump to those cells.
 
 ## 1.0.4

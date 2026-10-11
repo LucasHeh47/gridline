@@ -9,6 +9,7 @@ import { platform } from '../platform';
 import { dialog, toast } from '../widgets';
 import { AiController, type ChatItem, type ProposalItem } from './AiController';
 import { renderMarkdown, withRefs, type RefLinks } from './markdown';
+import { validKeyFormat } from '../../shared/secrets';
 
 const EXAMPLES = [
   "Find duplicate transactions, but don't delete anything.",
@@ -36,8 +37,14 @@ export async function askForKey(app: App): Promise<boolean> {
     { label: 'Save key', value: true, primary: true },
     { label: 'Cancel', value: false },
   ]);
+  // Take the key out of the page as soon as it's read; it's stored by the main process only
   const key = input.value.trim();
+  input.value = '';
   if (!ok || !key) return false;
+  if (!validKeyFormat(key)) {
+    toast("That doesn't look like an API key. Copy the whole key from console.anthropic.com and paste it again.", { kind: 'error' });
+    return false;
+  }
   const r = await platform.ai.setKey(key);
   if (!r.ok) {
     toast(r.error ?? "Couldn't save the key.", { kind: 'error' });
