@@ -99,6 +99,7 @@ export function duplicateSheet(tx: Transaction, wb: Workbook, sheet: Sheet): She
     })),
     anchor: { ...c.anchor },
   }));
+  copy.validations = sheet.validations.map((v) => ({ ...v, id: v.id + '-copy', ranges: v.ranges.map((r) => ({ ...r })) }));
   copy.buttons = sheet.buttons.map((b) => ({ ...b, id: b.id + '-' + Math.random().toString(36).slice(2, 7), anchor: { ...b.anchor } }));
   copy.tabColor = sheet.tabColor;
   copy.showGrid = sheet.showGrid;

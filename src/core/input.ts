@@ -1,6 +1,7 @@
 // Interprets what the user types into a cell.
 import { config } from './config';
 import { dateToSerial, MONTHS, timeToSerial } from './dates';
+import { parseExcelNumber } from './formula/excelMath';
 import { parseErrorCode, ErrorValue, type Scalar } from './values';
 
 export interface ParsedInput {
@@ -64,7 +65,7 @@ function parseNumberWithFormat(raw: string): { value: number; numFmt?: string } 
   }
   if (!s || !NUM_RE.test(s) || s === '.') return null;
   const hasThousands = s.includes(',');
-  const n = parseFloat(s.replace(/,/g, ''));
+  const n = parseExcelNumber(s.replace(/,/g, ''));
   if (isNaN(n)) return null;
   let value = neg ? -n : n;
   if (percent) value /= 100;

@@ -5,12 +5,13 @@ import type { Doc } from '../doc';
 import { normalizeFuncName, parseFormula, type Node } from '../formula/parser';
 import { FUNCTIONS, XLFN_FUNCS, XLWS_FUNCS } from '../formula/functions';
 import { Matrix, RangeRef } from '../formula/types';
-import { tokenize } from '../formula/tokenizer';
+import { tokenize, type Token } from '../formula/tokenizer';
 import { applyTint, type BorderSide, type BorderStyle, type HAlign, type Style, type VAlign } from '../styles';
 import { ErrorValue, parseErrorCode, type ErrorCode, type Scalar } from '../values';
 import { Sheet, Workbook, type CFRule, type CFStyle, type CFValue, type Cell } from '../workbook';
 import { prepareForExcelJS, readCharts, readNotes, writeCharts } from './xlsxCharts';
 import { readMacros, writeMacros } from './xlsxMacros';
+import { readValidations, writeValidations } from './xlsxValidation';
 
 type ExcelJS = typeof ExcelJSTypes;
 
@@ -157,20 +158,124 @@ function toExcelStyle(s: Style): Partial<ExcelJSTypes.Style> {
 
 /** Removes _xlfn./_xlws. prefixes Excel uses in files. */
 function fromFileFormula(f: string): string {
-  return f.replace(/_xlfn\._xlws\.|_xlfn\.|_xlws\./gi, '').replace(/^=/, '');
+  return (
+    f
+      .replace(/_xlfn\.ANCHORARRAY\(([^()]+)\)/gi, '$1#')
+      .replace(/_xlfn\.SINGLE\(([^()]+)\)/gi, '@$1')
+      .replace(/_xlfn\._xlws\.|_xlfn\.|_xlws\.|_xlpm\./gi, '')
+      // Files written by some tools mark built-in functions (CONCAT, LET, XLOOKUP…) as add-in functions
+      // (_xludf.), which Excel then shows as #NAME?. Use the built-in function; saving writes it correctly.
+      .replace(/_xludf\.([A-Za-z][A-Za-z0-9.]*)(?=\()/gi, (m, name: string) => (FUNCTIONS.has(name.toUpperCase()) ? name : m))
+      .replace(/^=/, '')
+  );
 }
 
-/** Adds the _xlfn. prefixes newer functions need inside .xlsx files. */
+/** Variable names declared by LET and LAMBDA (Excel writes them as _xlpm.name inside files). */
+function lambdaParams(toks: Token[]): Set<string> {
+  const names = new Set<string>();
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (t.type !== 'func') continue;
+    const fn = normalizeFuncName(t.text);
+    if (fn !== 'LET' && fn !== 'LAMBDA') continue;
+    let j = i + 1;
+    while (j < toks.length && toks[j].type === 'ws') j++;
+    if (toks[j]?.type !== 'lparen') continue;
+    const args: Token[][] = [[]];
+    let depth = 0;
+    for (j = j + 1; j < toks.length; j++) {
+      const k = toks[j];
+      if (k.type === 'lparen' || k.type === 'lbrace') depth++;
+      else if (k.type === 'rparen' || k.type === 'rbrace') {
+        if (depth === 0) break;
+        depth--;
+      } else if (k.type === 'comma' && depth === 0) {
+        args.push([]);
+        continue;
+      }
+      args[args.length - 1].push(k);
+    }
+    args.forEach((a, idx) => {
+      // LET(name1, value1, name2, value2, …, result); LAMBDA(param1, param2, …, body)
+      if (idx === args.length - 1 || (fn === 'LET' && idx % 2 === 1)) return;
+      const real = a.filter((x) => x.type !== 'ws');
+      if (real.length === 1 && real[0].type === 'name') names.add(real[0].text.toLowerCase());
+    });
+  }
+  return names;
+}
+
+/** Adds the _xlfn. prefixes newer functions need inside .xlsx files (and _xlpm. for LET/LAMBDA names). */
 export function toFileFormula(f: string): string {
-  return tokenize(f)
-    .map((t) => {
-      if (t.type !== 'func') return t.text;
-      const name = normalizeFuncName(t.text);
-      if (XLWS_FUNCS.has(name)) return '_xlfn._xlws.' + name;
-      if (XLFN_FUNCS.has(name)) return '_xlfn.' + name;
-      return t.text;
-    })
-    .join('');
+  const toks = tokenize(f);
+  const params = lambdaParams(toks);
+  const out = toks.map((t) => {
+    // Without the prefix Excel can't read the formula and refuses to open the whole file
+    if ((t.type === 'name' || t.type === 'func') && params.has(t.text.toLowerCase())) return '_xlpm.' + t.text;
+    if (t.type !== 'func') return t.text;
+    const name = normalizeFuncName(t.text);
+    if (XLWS_FUNCS.has(name)) return '_xlfn._xlws.' + name;
+    if (XLFN_FUNCS.has(name)) return '_xlfn.' + name;
+    return t.text;
+  });
+  // In files, A1# is written _xlfn.ANCHORARRAY(A1) and @x is _xlfn.SINGLE(x); Excel can't open "A1#"
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (t.type !== 'op' || (t.text !== '#' && t.text !== '@')) continue;
+    if (t.text === '#') {
+      let p = i - 1;
+      while (p >= 0 && toks[p].type === 'ws') p--;
+      const start = operandStart(toks, p);
+      if (start < 0) continue;
+      out[start] = '_xlfn.ANCHORARRAY(' + out[start];
+      out[p] += ')';
+      out[i] = '';
+    } else {
+      let n = i + 1;
+      while (n < toks.length && toks[n].type === 'ws') n++;
+      const end = operandEnd(toks, n);
+      if (end < 0) continue;
+      out[i] = '_xlfn.SINGLE(';
+      out[end] += ')';
+    }
+  }
+  return out.join('');
+}
+
+/** Index of the first token of the operand that ends at token p (a reference, or a parenthesized call). */
+function operandStart(toks: Token[], p: number): number {
+  if (p < 0) return -1;
+  if (toks[p].type === 'ref') return p;
+  if (toks[p].type !== 'rparen') return -1;
+  let depth = 0;
+  for (let i = p; i >= 0; i--) {
+    if (toks[i].type === 'rparen') depth++;
+    else if (toks[i].type === 'lparen' && --depth === 0) {
+      let k = i - 1;
+      while (k >= 0 && toks[k].type === 'ws') k--;
+      return k >= 0 && toks[k].type === 'func' ? k : i;
+    }
+  }
+  return -1;
+}
+
+/** Index of the last token of the operand that starts at token n. */
+function operandEnd(toks: Token[], n: number): number {
+  const t = toks[n];
+  if (!t) return -1;
+  if (t.type === 'ref' || t.type === 'name' || t.type === 'num') return n;
+  let i = n;
+  if (t.type === 'func') {
+    i++;
+    while (i < toks.length && toks[i].type === 'ws') i++;
+  }
+  if (toks[i]?.type !== 'lparen') return -1;
+  let depth = 0;
+  for (; i < toks.length; i++) {
+    if (toks[i].type === 'lparen') depth++;
+    else if (toks[i].type === 'rparen' && --depth === 0) return i;
+  }
+  return -1;
 }
 
 /** Does this formula do array math that older Excel would evaluate differently unless entered as an array formula? */
@@ -510,9 +615,6 @@ export async function readXlsx(data: Uint8Array): Promise<ReadResult> {
       }
       if (range) sheet.filter = { range, conds: {} };
     }
-    if ((ws as unknown as { dataValidations?: { model?: object } }).dataValidations?.model && Object.keys((ws as unknown as { dataValidations: { model: object } }).dataValidations.model).length) {
-      warnings.add('Data validation rules aren\'t supported yet and will not be kept when you save.');
-    }
     sheet.invalidateBounds();
     wb.sheets.push(sheet);
   });
@@ -547,6 +649,12 @@ export async function readXlsx(data: Uint8Array): Promise<ReadResult> {
     if (charts.pictures) warnings.add("Pictures in this file aren't supported yet and won't be kept when you save.");
   } catch {
     warnings.add('Charts in this file couldn\'t be read.');
+  }
+
+  try {
+    await readValidations(data, wb);
+  } catch {
+    warnings.add("Some data validation rules couldn't be read.");
   }
 
   // Macros: VBA code, sheet code names and Gridline's step macros/buttons
@@ -703,6 +811,7 @@ export async function writeXlsx(doc: Doc, opts: { macroEnabled?: boolean } = {})
 
   let buf: Uint8Array = new Uint8Array((await xwb.xlsx.writeBuffer()) as ArrayBuffer);
   if (wb.sheets.some((s) => s.charts.length)) buf = await writeCharts(buf, doc);
+  buf = await writeValidations(buf, wb);
   return writeMacros(buf, wb, !!opts.macroEnabled);
 }
 

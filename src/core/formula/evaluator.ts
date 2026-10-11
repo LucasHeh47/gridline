@@ -2,9 +2,19 @@
 import { formatCell, MAX_COLS, MAX_ROWS } from '../address';
 import { Errors, ErrorValue, isError, type Scalar } from '../values';
 import { compareValues, describeRef, isArrayLike, numResult, scalarOf, toMatrix, toNumber, toText } from './coerce';
+import { snapNearZero, xAdd, xDiv, xMul, xSub } from './excelMath';
 import { FUNCTIONS, suggestFunction, type FnDef } from './functions/registry';
 import { parseFormula, type Node } from './parser';
 import { Matrix, RangeRef, type Arg, type Ctx, type Value } from './types';
+
+/**
+ * Evaluates a whole formula. Like Excel, a final + or - (not inside parentheses) whose result is within
+ * a few units in the last place of zero gives exactly 0, so =0.1+0.2-0.3 is 0.
+ */
+export function evaluateFormula(node: Node, ctx: Ctx): Value {
+  if (node.t === 'bin' && (node.op === '+' || node.op === '-') && !node.paren) return binary(node, ctx, true);
+  return evaluate(node, ctx);
+}
 
 export function evaluate(node: Node, ctx: Ctx): Value {
   switch (node.t) {
@@ -130,7 +140,7 @@ function describeOperand(node: Node, ctx: Ctx): string | null {
   return null;
 }
 
-function arith(op: string, a: Scalar, b: Scalar, node: Node & { t: 'bin' }, ctx: Ctx): Scalar {
+function arith(op: string, a: Scalar, b: Scalar, node: Node & { t: 'bin' }, ctx: Ctx, snap = false): Scalar {
   if (op === '&') {
     const x = toText(a);
     if (isError(x)) return x;
@@ -163,18 +173,18 @@ function arith(op: string, a: Scalar, b: Scalar, node: Node & { t: 'bin' }, ctx:
   if (isError(y)) return withOperand(y, node.r, ctx);
   switch (op) {
     case '+':
-      return numResult(x + y);
+      return numResult(snap ? snapNearZero(xAdd(x, y), x, y) : xAdd(x, y));
     case '-':
-      return numResult(x - y);
+      return numResult(snap ? snapNearZero(xSub(x, y), x, y) : xSub(x, y));
     case '*':
-      return numResult(x * y);
+      return numResult(xMul(x, y));
     case '/': {
       if (y === 0) {
         const who = describeOperand(node.r, ctx);
         if (who) return Errors.div0(`You're dividing by ${who}, which is ${b === null ? 'empty' : '0'}.`);
         return Errors.div0('The divisor (the value after "/") is 0.');
       }
-      return numResult(x / y);
+      return numResult(xDiv(x, y));
     }
     case '^': {
       if (x === 0 && y === 0) return Errors.num('0 raised to the power 0 is undefined.');
@@ -192,7 +202,7 @@ function withOperand(e: ErrorValue, node: Node, ctx: Ctx): ErrorValue {
   return new ErrorValue(e.code, `${who} contains ${e.message.charAt(0).toLowerCase()}${e.message.slice(1)}`);
 }
 
-function binary(node: Node & { t: 'bin' }, ctx: Ctx): Value {
+function binary(node: Node & { t: 'bin' }, ctx: Ctx, snap = false): Value {
   const lv = evaluate(node.l, ctx);
   const rv = evaluate(node.r, ctx);
   if (isArrayLike(lv) || isArrayLike(rv)) {
@@ -208,7 +218,7 @@ function binary(node: Node & { t: 'bin' }, ctx: Ctx): Value {
     };
     return Matrix.fill(rows, cols, (r, c) => arith(node.op, pick(lm, r, c), pick(rm, r, c), node, ctx));
   }
-  return arith(node.op, scalarOf(ctx, lv), scalarOf(ctx, rv), node, ctx);
+  return arith(node.op, scalarOf(ctx, lv), scalarOf(ctx, rv), node, ctx, snap);
 }
 
 function callFunction(node: Node & { t: 'func' }, ctx: Ctx): Value {

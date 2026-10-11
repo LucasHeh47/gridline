@@ -14,7 +14,8 @@ describe('files from other apps', () => {
     const doc = new Doc(wb);
     const [sales, summary] = wb.sheets;
     expect(sales.name).toBe('Sales Data');
-    expect(warnings.some((w) => /Data validation/.test(w))).toBe(true);
+    expect(warnings.some((w) => /validation/i.test(w))).toBe(false);
+    expect(sales.validations.map((v) => [v.type, v.formula1, v.dropdown])).toEqual([['list', '"North,South,East,West"', true]]);
     expect(val(doc, 'F2', sales)).toBe(45);
     expect(val(doc, 'G2', sales)).toBe(3.71); // uses the defined name Rate
     expect(val(doc, 'J3', sales)).toBe(9906.25);
@@ -42,5 +43,6 @@ describe('files from other apps', () => {
     expect(sales.charts).toHaveLength(1);
     expect(summary.charts).toHaveLength(2);
     expect(sales.cf).toHaveLength(4);
+    expect(sales.validations).toHaveLength(1);
   }, 60000);
 });

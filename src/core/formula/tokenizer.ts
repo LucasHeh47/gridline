@@ -1,6 +1,7 @@
 // Formula tokenizer. Lossless: concatenating token texts reproduces the input exactly,
 // which lets reference-rewriting (insert rows, copy/paste, rename sheet) preserve formatting.
 import { MAX_COLS, MAX_ROWS, nameToCol, quoteSheetName, colToName } from '../address';
+import { parseExcelNumber } from './excelMath';
 
 export type TokType =
   | 'num'
@@ -262,7 +263,7 @@ export function tokenize(src: string): Token[] {
     }
     if ((ch >= '0' && ch <= '9') || (ch === '.' && /\d/.test(src[i + 1] ?? ''))) {
       const m = matchAt(NUMBER, src, i)!;
-      push('num', i, i + m[0].length, { value: parseFloat(m[0]) });
+      push('num', i, i + m[0].length, { value: parseExcelNumber(m[0]) });
       i += m[0].length;
       continue;
     }

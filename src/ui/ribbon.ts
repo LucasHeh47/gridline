@@ -677,6 +677,10 @@ export class Ribbon {
         this.stack([this.cmd('data.sortAsc', { label: 'Sort A → Z' })], [this.cmd('data.sortDesc', { label: 'Sort Z → A' })], [this.cmd('data.sortCustom', { label: 'Custom sort' })]),
         this.stack([this.cmd('data.clearFilters', { label: 'Clear filters' })], [this.cmd('data.reapplyFilter', { label: 'Reapply' })]),
       ]),
+      this.group('validate', 'Validation', L.ListChecks, () => [
+        this.cmd('data.validation', { big: true, label: 'Data validation' }),
+        this.stack([this.cmd('data.circleInvalid', { label: 'Circle invalid data' })], [this.cmd('data.clearCircles', { label: 'Clear circles' })]),
+      ]),
       this.group('tools', 'Data tools', L.Wrench, () => [
         this.cmd('fmt.advanced', { big: true, label: 'Advanced format' }),
         this.stack([this.cmd('data.dedupe', { label: 'Remove duplicates' })], [this.cmd('edit.fillDown', { label: 'Fill down' })], [this.cmd('edit.fillRight', { label: 'Fill right' })]),

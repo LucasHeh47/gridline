@@ -74,7 +74,7 @@ Press **Esc** or click **✕** to go back to your workbook. If the current windo
 | **Home** | Undo; clipboard; font; alignment; number formats; **Advanced format**; conditional formatting and cell styles; insert/delete rows and columns; AutoSum, fill, clear, sort, filter and find. |
 | **Insert** | Charts; functions; live data shortcuts; links and notes; rows and columns; new and duplicate sheets; presets. |
 | **Formulas** | Insert function, AutoSum, and a menu for each function category; show formulas; trace precedents (the cells a formula uses); recalculate. |
-| **Data** | Sort and filter; remove duplicates; fill; Advanced format; refresh live data. |
+| **Data** | Sort and filter; data validation and circling invalid data; remove duplicates; fill; Advanced format; refresh live data. |
 | **Live Data** | **Finance** (stocks, price history, crypto, currencies), **Sports** (NFL data), **Weather & world** (weather, forecast, holidays, country data), and refreshing. |
 | **Automate** | Run a macro; the macro editor; new macros; step macros (no code, Beta); buttons, shortcuts and automatic macros; macro settings. |
 | **View** | Gridlines, headings, formula bar, status bar and the row-and-column highlight; zoom; freeze panes; light/dark theme and accent color; ribbon size; settings. |
@@ -136,6 +136,12 @@ Press **Esc** or click **✕** to go back to your workbook. If the current windo
 - **Sort A→Z / Z→A** sorts the table around the selected cell. **Custom sort** sorts by several columns.
 - **Filter (Ctrl+Shift+L)** adds buttons to the header row. Pick values, or use conditions like "contains", "greater than", "top 10" or "above average".
 - **Remove duplicates** keeps the first copy of each row.
+- **Data validation** (**Data → Data validation**) limits what can be typed in cells:
+  - Allow whole numbers, decimals, dates, times or text of a certain length (between 1 and 500, at least 0…), a **list of choices**, or a custom formula.
+  - Lists show a dropdown arrow on the cell. Click it, or press **Alt+↓**, to pick a choice.
+  - Add a **message** that appears when the cell is selected, and an **alert** for values that break the rule: *Stop* (not allowed), *Warning* (ask first) or *Information*.
+  - **Circle invalid data** draws red circles around cells that already break their rule.
+  - Rules work like Excel's and are kept in `.xlsx` files.
 - **Freeze panes** keeps the top row, the first column, or everything above and left of the selected cell in view while you scroll.
 - **Sheets:**
   - Use **+** at the bottom left to add a sheet.
@@ -202,7 +208,8 @@ Yellow cells are the ones meant for you to change. Your favorite NFL team, fanta
 - **CSV files** hold one sheet of values only. If your workbook has formatting, formulas or several sheets, Gridline asks whether to keep the CSV or save an `.xlsx` copy.
 - **AutoSave** (**Settings → Files & saving**) saves `.xlsx` files that already have a location every few minutes.
 - **Excel compatibility:**
-  - Gridline keeps formulas, formatting, merged cells, conditional formatting, charts, freeze panes, filters, notes and links.
+  - Gridline keeps formulas, formatting, merged cells, conditional formatting, data validation, charts, freeze panes, filters, notes and links.
+  - Calculations match Excel exactly, down to the last digit. Gridline adds, rounds and displays numbers the same way Excel does.
   - Macro-enabled `.xlsm` files open with their VBA code, and the code is saved back. See [Macros and automation](#11-macros-and-automation).
   - Old `.xls` files need to be saved as `.xlsx` in another app first.
 - **Gridline-only functions** (live data and personal finance) are saved with their last results, so the values still show in Excel. Excel can't recalculate them.

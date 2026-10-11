@@ -3595,3 +3595,68 @@ textarea.input {
 .shortcut-box:focus {
   border-color: var(--accent);
 }
+
+/* ---------- data validation ---------- */
+.dv-arrow {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.dv-arrow:hover {
+  background: var(--hover);
+}
+.dv-arrow[hidden],
+.dv-prompt[hidden] {
+  display: none;
+}
+.dv-prompt {
+  position: absolute;
+  z-index: 6;
+  max-width: 260px;
+  padding: 6px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: #fff8d6;
+  color: #3b3200;
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+  white-space: pre-wrap;
+}
+.dv-prompt strong {
+  display: block;
+  margin-bottom: 2px;
+}
+.dv-circles {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+.dv-circle {
+  position: absolute;
+  border: 2px solid #e5484d;
+  border-radius: 50%;
+  pointer-events: none;
+}
+.dv-rule {
+  display: block;
+  width: 100%;
+  margin-bottom: 6px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.dv-rule.on {
+  border-color: var(--accent);
+}

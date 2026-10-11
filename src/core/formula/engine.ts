@@ -3,7 +3,7 @@ import { cellKey, formatCell, MAX_COLS, MAX_ROWS, type Range } from '../address'
 import type { TouchedCell } from '../history';
 import { Errors, ErrorValue, type Scalar } from '../values';
 import type { Sheet, Workbook } from '../workbook';
-import { evaluate } from './evaluator';
+import { evaluate, evaluateFormula } from './evaluator';
 import { FUNCTIONS, VOLATILE_FUNCS } from './functions';
 import { parseFormula, type Node, type ParsedFormula } from './parser';
 import { Matrix, RangeRef, type Ctx, type Value } from './types';
@@ -237,7 +237,7 @@ export class Engine {
   evalAst(ast: Node, sheet: Sheet, row: number, col: number, dr = 0, dc = 0): Value {
     const ctx = this.makeCtx(sheet, row, col, dr, dc);
     try {
-      return evaluate(ast, ctx);
+      return evaluateFormula(ast, ctx);
     } catch (e) {
       if (e instanceof TooDeep) return Errors.calc('The calculation is too deeply nested.');
       throw e;
@@ -475,7 +475,7 @@ export class Engine {
       if (!info.parsed.ast) {
         result = Errors.value(`This formula has a syntax error: ${info.parsed.error?.message ?? 'unknown problem'}`);
       } else {
-        result = evaluate(info.parsed.ast, this.makeCtx(sheet, info.row, info.col, 0, 0));
+        result = evaluateFormula(info.parsed.ast, this.makeCtx(sheet, info.row, info.col, 0, 0));
       }
     } finally {
       this.depth--;

@@ -10,6 +10,7 @@ import {
   type CollectOpts,
 } from '../coerce';
 import { makeMatcher } from '../criteria';
+import { excelSum, xMul } from '../excelMath';
 import { Matrix, RangeRef, type Arg, type Ctx, type Value } from '../types';
 import { define } from './registry';
 import * as stats from './stats-core';
@@ -48,17 +49,9 @@ function unary(f: (x: number) => number | ErrorValue) {
   };
 }
 
+/** Adds like Excel: left to right, so totals match Excel to the last digit. */
 function sumOf(nums: number[]): number {
-  // Kahan summation reduces floating point drift (0.1+0.2+... style errors)
-  let s = 0;
-  let c = 0;
-  for (const n of nums) {
-    const y = n - c;
-    const t = s + y;
-    c = t - s - y;
-    s = t;
-  }
-  return s;
+  return excelSum(nums);
 }
 
 export function sumArgs(ctx: Ctx, args: Arg[], opts?: CollectOpts): Value {
@@ -79,7 +72,7 @@ define('PRODUCT', 'Math', 'number1, [number2], ...', 'Multiplies all the numbers
   const nums = collectNumbers(ctx, args);
   if (isError(nums)) return nums;
   if (nums.length === 0) return 0;
-  return numResult(nums.reduce((a, b) => a * b, 1));
+  return numResult(nums.reduce((a, b) => xMul(a, b), 1));
 });
 
 define(
@@ -93,19 +86,19 @@ define(
     const cols = mats[0].cols;
     if (mats.some((m) => m.rows !== rows || m.cols !== cols))
       return Errors.value('All arrays in SUMPRODUCT must be the same size.');
-    let total = 0;
+    const products: number[] = [];
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         let p = 1;
         for (const m of mats) {
           const v = m.get(r, c);
           if (v instanceof ErrorValue) return v;
-          p *= typeof v === 'number' ? v : typeof v === 'boolean' && mats.length === 1 ? 0 : typeof v === 'boolean' ? (v ? 1 : 0) : 0;
+          p = xMul(p, typeof v === 'number' ? v : typeof v === 'boolean' && mats.length === 1 ? 0 : typeof v === 'boolean' ? (v ? 1 : 0) : 0);
         }
-        total += p;
+        products.push(p);
       }
     }
-    return numResult(total);
+    return numResult(excelSum(products));
   },
 );
 

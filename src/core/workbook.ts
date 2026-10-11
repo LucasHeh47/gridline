@@ -2,6 +2,7 @@
 import { cellKey, keyCol, keyRow, MAX_COLS, MAX_ROWS, type Range } from './address';
 import type { MacroProject, SheetButton } from './macros/project';
 import { StyleTable } from './styles';
+import type { DataValidation } from './validation';
 import type { Scalar } from './values';
 
 export interface Cell {
@@ -152,6 +153,8 @@ export class Sheet {
   charts: ChartDef[] = [];
   /** Buttons that run macros. */
   buttons: SheetButton[] = [];
+  /** Data validation rules (allowed values, dropdown lists). */
+  validations: DataValidation[] = [];
   /** The sheet's name in VBA code (Sheet1), which stays the same when the tab is renamed. */
   codeName?: string;
   tabColor?: string;

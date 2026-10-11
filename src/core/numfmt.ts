@@ -319,8 +319,7 @@ export function formatGeneral(n: number, maxChars = 11): string {
   if (abs >= 1e11 || abs < 1e-9) return formatSci(n, maxChars);
   // Try decreasing precision until it fits.
   for (let digits = 10; digits >= 1; digits--) {
-    let s = n.toPrecision(digits);
-    if (s.includes('e')) return formatSci(n, maxChars);
+    let s = excelPrecision(n, digits);
     if (s.includes('.')) s = s.replace(/\.?0+$/, '');
     if (s.length <= maxChars) return s;
   }
@@ -495,7 +494,7 @@ function fmtNumber(sec: Section, v: number, useAbs: boolean): Formatted {
     }
     expPart = 'E' + (e < 0 ? '-' : expTok.sign === '+' ? '+' : '') + pad(Math.abs(e), Math.max(1, expDigits));
   } else {
-    mantissaStr = roundTo(n, sec.fracDigits).toFixed(sec.fracDigits);
+    mantissaStr = excelFixed(n, sec.fracDigits);
   }
 
   let [intStr, fracStr = ''] = mantissaStr.split('.');
@@ -640,8 +639,67 @@ function renderLit(t: Tok): string {
 }
 
 function roundTo(n: number, digits: number): number {
-  const f = Math.pow(10, digits);
-  return Math.round((n + Number.EPSILON * n) * f) / f;
+  return (n < 0 ? -1 : 1) * Number(excelFixed(Math.abs(n), digits));
+}
+
+// ---------- rounding for display, the way Excel does it ----------
+// Excel shows a number by first taking it to 15 significant digits and then rounding those decimal
+// digits, halves away from zero. Rounding the binary value directly differs for values like
+// 1087.005 (stored as 1087.00499999999988…), which Excel shows as 1087.01.
+
+/** The 15 significant digits of |n|, and how many of them come before the decimal point. */
+function digits15(n: number): { d: number[]; point: number } {
+  const [mant, exp] = Math.abs(n).toExponential(14).split('e');
+  return { d: mant.replace('.', '').split('').map(Number), point: Number(exp) + 1 };
+}
+
+/** Keeps the first `keep` digits, rounding half up. */
+function keepDigits(d: number[], point: number, keep: number): { d: number[]; point: number } {
+  if (keep >= d.length) return { d, point };
+  if (keep < 0) return { d: [0], point: 1 };
+  const out = d.slice(0, keep);
+  if (d[keep] >= 5) {
+    let i = keep - 1;
+    for (; i >= 0; i--) {
+      if (out[i] === 9) out[i] = 0;
+      else {
+        out[i]++;
+        break;
+      }
+    }
+    if (i < 0) {
+      out.unshift(1);
+      point++;
+    }
+  }
+  return { d: out.length ? out : [0], point: out.length ? point : 1 };
+}
+
+function render(d: number[], point: number, decimals: number): string {
+  let int = '';
+  for (let i = 0; i < point; i++) int += i < d.length ? d[i] : 0;
+  let frac = '';
+  for (let i = 0; i < decimals; i++) {
+    const k = point + i;
+    frac += k >= 0 && k < d.length ? d[k] : 0;
+  }
+  return (int || '0') + (decimals > 0 ? '.' + frac : '');
+}
+
+/** |n| with exactly `decimals` decimal places, rounded as Excel displays it. */
+export function excelFixed(n: number, decimals: number): string {
+  if (n === 0 || !Number.isFinite(n)) return (0).toFixed(decimals);
+  const { d, point } = digits15(n);
+  const r = keepDigits(d, point, point + decimals);
+  return render(r.d, r.point, decimals);
+}
+
+/** n rounded to `sig` significant digits as Excel displays it, in plain notation (trailing zeros kept). */
+function excelPrecision(n: number, sig: number): string {
+  const { d, point } = digits15(n);
+  const r = keepDigits(d, point, sig);
+  const decimals = Math.max(0, sig - r.point);
+  return (n < 0 ? '-' : '') + render(r.d, r.point, decimals);
 }
 
 function fmtFraction(sec: Section, n: number): string {

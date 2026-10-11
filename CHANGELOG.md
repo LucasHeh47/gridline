@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.4
+
+- **Calculations match Excel exactly.** Tested against an Excel workbook with 9,719 formulas: every result is identical to Excel's, down to the last digit, and all 19,638 cells display the same text. Gridline now:
+  - adds up SUM, SUMIFS and SUMPRODUCT in the same order as Excel;
+  - rounds the last digit of multiplications and divisions like Excel;
+  - returns exactly 0 when a final + or − lands a hair away from zero (=0.1+0.2-0.3 is 0, like Excel);
+  - keeps 15 significant digits of numbers you type, like Excel;
+  - rounds displayed values like Excel, so $1,087.005 shows as $1,087.01.
+- **Data validation.** **Data → Data validation** limits what can be typed in cells:
+  - whole numbers, decimals, dates, times, text length, dropdown lists or a custom formula;
+  - an input message and a Stop, Warning or Information alert;
+  - **Circle invalid data** shows cells that break a rule.
+  - Rules from Excel files are kept and saved.
+- **Excel files:**
+  - Fixed workbooks that Excel couldn't open after saving in Gridline. This affected a chart on a sheet with data bars, formulas using LET, and spill references like A1#.
+  - LAMBDA and other recent Excel functions keep working in Excel after you save.
+  - Formulas that some apps save in a way Excel shows as #NAME? (CONCAT, LET, XLOOKUP) now calculate.
+
 ## 1.0.3
 
 - **Macros.** Gridline now runs VBA macros, the same kind Excel uses. Open the new **Automate** tab to run a macro, or open the **macro editor** (Alt+F11) to write one. The editor sits under the grid, so you can see your sheet while you work. It has syntax colors, red underlines for mistakes, and F5 to run. Most everyday Excel macros work: Range, Cells, Worksheets, loops, If, MsgBox, InputBox, WorksheetFunction, sorting, finding, formatting and more. A whole macro run undoes with one Ctrl+Z.

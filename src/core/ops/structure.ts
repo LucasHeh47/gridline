@@ -97,6 +97,19 @@ export function restructure(tx: Transaction, wb: Workbook, sheet: Sheet, axis: '
       })
       .filter((r): r is NonNullable<typeof r> => !!r),
   );
+  if (sheet.validations.length) {
+    const adj = (f: string | undefined) => (f === undefined || f.trim().startsWith('"') ? f : adjustForStructure(f, sheet.name, ch));
+    tx.setProp(
+      sheet,
+      'validations',
+      sheet.validations
+        .map((dv) => {
+          const ranges = dv.ranges.map(fix).filter((r): r is Range => !!r);
+          return ranges.length ? { ...dv, ranges, formula1: adj(dv.formula1) ?? '', formula2: adj(dv.formula2) } : null;
+        })
+        .filter((d): d is NonNullable<typeof d> => !!d),
+    );
+  }
   if (sheet.filter) {
     const range = fix(sheet.filter.range);
     if (!range) tx.setProp(sheet, 'filter', null);

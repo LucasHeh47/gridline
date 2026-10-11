@@ -308,6 +308,12 @@ export class Commands {
     a({ id: 'data.sortAsc', title: 'Sort A → Z (smallest to largest)', category: 'Data', icon: L.ArrowDownAZ, keywords: 'sort ascending', run: () => quickSort(app, false) });
     a({ id: 'data.sortDesc', title: 'Sort Z → A (largest to smallest)', category: 'Data', icon: L.ArrowUpZA, keywords: 'sort descending', run: () => quickSort(app, true) });
     a({ id: 'data.sortCustom', title: 'Custom sort…', category: 'Data', icon: L.ArrowUpDown, keywords: 'sort multiple columns levels', run: () => app.panel.open('sort') });
+    a({ id: 'data.validation', title: 'Data validation — limit what can be typed in cells', category: 'Data', icon: L.ListChecks, keywords: 'dropdown list allowed values rule input message error alert restrict', run: () => app.panel.open('validation') });
+    a({ id: 'data.circleInvalid', title: 'Circle invalid data', category: 'Data', icon: L.CircleDashed, keywords: 'validation check', run: () => {
+      const n = app.validation.circleInvalid();
+      toast(n ? `Circled ${n} cell${n === 1 ? '' : 's'} that break${n === 1 ? 's' : ''} a validation rule.` : 'All cells match their validation rules.', { kind: n ? 'info' : 'success' });
+    } });
+    a({ id: 'data.clearCircles', title: 'Clear validation circles', category: 'Data', icon: L.CircleOff, keywords: 'validation', enabled: () => app.validation.circling, run: () => app.validation.clearCircles() });
     a({ id: 'data.filter', title: 'Filter (toggle)', category: 'Data', keys: ['Ctrl+Shift+L'], icon: L.Funnel, keywords: 'autofilter', checked: () => !!sheet().filter, run: () => toggleFilter(app) });
     a({ id: 'data.clearFilters', title: 'Clear all filters', category: 'Data', icon: L.FunnelX, enabled: () => !!sheet().filter && Object.keys(sheet().filter!.conds).length > 0, run: () => app.transact('Clear filters', (tx) => applyFilter(tx, app.doc, sheet(), { ...sheet().filter!, conds: {} })) });
     a({ id: 'data.reapplyFilter', title: 'Reapply filter', category: 'Data', icon: L.ListFilter, enabled: () => !!sheet().filter, run: () => app.transact('Reapply filter', (tx) => applyFilter(tx, app.doc, sheet(), sheet().filter)) });

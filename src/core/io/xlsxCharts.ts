@@ -220,7 +220,24 @@ function chartXml(doc: Doc, sheet: Sheet, chart: ChartDef): string {
 <c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="${NS_REL}"><c:roundedCorners val="0"/><c:chart>${titleXml(chart.title)}<c:autoTitleDeleted val="${chart.title ? 0 : 1}"/><c:plotArea><c:layout/>${plot}</c:plotArea>${legend}<c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart></c:chartSpace>`;
 }
 
-const DRAWING_SLOT_BEFORE = ['<legacyDrawing ', '<legacyDrawing>', '<legacyDrawingHF', '<picture', '<oleObjects', '<controls', '<webPublishItems', '<tableParts', '<extLst'];
+const DRAWING_SLOT_BEFORE = ['legacyDrawing', 'legacyDrawingHF', 'drawingHF', 'picture', 'oleObjects', 'controls', 'webPublishItems', 'tableParts', 'extLst'];
+
+/**
+ * Where to insert a top-level worksheet element that must come before any of `before` (schema order).
+ * Only looks past <sheetData> and conditional formats, because a data bar rule has its own nested
+ * <extLst> that must not be mistaken for the worksheet's.
+ */
+export function topLevelSlot(xml: string, before: string[]): number {
+  const from = Math.max(xml.indexOf('</sheetData>'), xml.lastIndexOf('</conditionalFormatting>'), xml.lastIndexOf('</dataValidations>'), 0);
+  let pos = -1;
+  for (const tag of before) {
+    const re = new RegExp(`<${tag}[\\s>/]`, 'g');
+    re.lastIndex = from;
+    const m = re.exec(xml);
+    if (m && (pos < 0 || m.index < pos)) pos = m.index;
+  }
+  return pos >= 0 ? pos : xml.lastIndexOf('</worksheet>');
+}
 
 export async function writeCharts(buf: Uint8Array, doc: Doc): Promise<Uint8Array> {
   const zip = await JSZip.loadAsync(buf);
@@ -246,12 +263,7 @@ export async function writeCharts(buf: Uint8Array, doc: Doc): Promise<Uint8Array
     zip.file(relsPath, rels);
 
     const tag = `<drawing r:id="${drawingRelId}"/>`;
-    let pos = -1;
-    for (const marker of DRAWING_SLOT_BEFORE) {
-      const i = sheetXml.indexOf(marker);
-      if (i >= 0 && (pos < 0 || i < pos)) pos = i;
-    }
-    if (pos < 0) pos = sheetXml.lastIndexOf('</worksheet>');
+    const pos = topLevelSlot(sheetXml, DRAWING_SLOT_BEFORE);
     sheetXml = sheetXml.slice(0, pos) + tag + sheetXml.slice(pos);
     if (!/xmlns:r=/.test(sheetXml.slice(0, 600))) sheetXml = sheetXml.replace('<worksheet ', `<worksheet xmlns:r="${NS_REL}" `);
     zip.file(path, sheetXml);

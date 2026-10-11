@@ -8,9 +8,10 @@ import { ChartPanel } from './ChartPanel';
 import { FormatPanel } from './FormatPanel';
 import { FunctionsPanel } from './FunctionsPanel';
 import { NFLPanel } from './NFLPanel';
+import { ValidationPanel } from './ValidationPanel';
 import { SortPanel } from './SortPanel';
 
-export type PanelKind = 'format' | 'cf' | 'chart' | 'sort' | 'functions' | 'nfl';
+export type PanelKind = 'format' | 'cf' | 'chart' | 'sort' | 'functions' | 'nfl' | 'validation';
 
 export interface PanelContent {
   title: string;
@@ -65,6 +66,9 @@ export class SidePanel {
         break;
       case 'functions':
         this.content = new FunctionsPanel(app);
+        break;
+      case 'validation':
+        this.content = new ValidationPanel(app);
         break;
       case 'nfl':
         this.content = new NFLPanel(app, sub);

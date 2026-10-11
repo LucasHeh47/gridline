@@ -23,6 +23,7 @@ import { advancedFormat } from './advancedFormat';
 import { STEP_EXAMPLES } from '../core/macros/steps';
 import { ChartLayer } from './charts/ChartLayer';
 import { ButtonLayer } from './macros/ButtonLayer';
+import { ValidationLayer } from './validationLayer';
 import { MacroController } from './macros/MacroController';
 import { MacroEditor } from './macros/MacroEditor';
 import { Commands } from './commands';
@@ -128,6 +129,7 @@ export class App {
   panel: SidePanel;
   charts: ChartLayer;
   buttons: ButtonLayer;
+  validation: ValidationLayer;
   macros: MacroController;
   macroEditor: MacroEditor;
   commands: Commands;
@@ -194,9 +196,10 @@ export class App {
     this.panel = new SidePanel(this);
     this.charts = new ChartLayer(this);
     this.buttons = new ButtonLayer(this);
+    this.validation = new ValidationLayer(this);
     this.macroEditor = new MacroEditor(this);
     this.findBar = new FindBar(this);
-    this.grid.overlay.append(this.charts.el, this.buttons.el, this.editor.cellBox);
+    this.grid.overlay.append(this.charts.el, this.buttons.el, this.validation.el, this.editor.cellBox);
     this.grid.el.append(this.findBar.el);
 
     const main = h('div', { class: 'main' }, this.grid.el, this.panel.el);
@@ -549,6 +552,7 @@ export class App {
     this.titlebar?.refresh();
     this.charts?.sync();
     this.buttons?.sync();
+    this.validation?.refresh();
     this.macroEditor?.refresh();
     this.panel?.refresh();
     this.findBar?.refresh();
@@ -579,6 +583,7 @@ export class App {
     this.charts.deselect();
     this.hideCellTip();
     this.panel.selectionChanged();
+    this.validation.position();
   }
 
   private updateStats = debounce(() => this.statusbar.refresh(), 60);
@@ -679,11 +684,24 @@ export class App {
       else setCellInput(tx, this.doc, sheet, row, col, text);
     });
     if (!tx) return;
+    if (!fillSelection) void this.checkValidation(sheet, row, col, text, tx);
     // Auto-fit the row height when text with line breaks is entered
     if (text.includes('\n') && !sheet.rowHeights.has(row)) this.autofitRows([row], true);
     const v = this.doc.engine.getValue(sheet, row, col);
     if (v instanceof ErrorValue && v.origin && v.origin.row === row && v.origin.col === col && v.code !== '#N/A') {
       // The error explainer shows details once the user returns to the cell
+    }
+  }
+
+  /** After typing: if the value breaks the cell's validation rule, alert like Excel (and undo on Cancel). */
+  private async checkValidation(sheet: Sheet, row: number, col: number, text: string, tx: Transaction): Promise<void> {
+    const result = await this.validation.checkEntry(sheet, row, col);
+    if (result === 'keep') return;
+    if (this.doc.history.peekUndo() === tx) this.doc.undo();
+    if (result === 'retry') {
+      if (this.sheet !== sheet) this.setActiveSheet(sheet.id, false);
+      this.select({ r1: row, c1: col, r2: row, c2: col }, { row, col });
+      this.editor.start({ mode: 'enter', initial: text });
     }
   }
 
@@ -849,6 +867,11 @@ export class App {
 
   private onGridKey(e: KeyboardEvent): void {
     if (e.isComposing) return;
+    // Alt+Down opens a cell's dropdown list (data validation)
+    if (e.altKey && e.key === 'ArrowDown' && !e.ctrlKey && this.validation.openList()) {
+      e.preventDefault();
+      return;
+    }
     if (this.macros.handleKey(e)) {
       e.preventDefault();
       return;
@@ -1165,6 +1188,7 @@ export class App {
     this.editor.position();
     this.charts?.position();
     this.buttons?.position();
+    this.validation?.position();
   }
 
   hoverCell(x: number, y: number, e: MouseEvent): void {

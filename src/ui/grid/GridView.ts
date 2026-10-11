@@ -456,6 +456,7 @@ export class GridView {
     this.drawHeaders(scrollR1, lastR, scrollC1, lastC);
     this.app.charts?.position();
     this.app.buttons?.position();
+    this.app.validation?.position();
   }
 
   private font(st: Style): string {

@@ -12,7 +12,8 @@ export type Node =
   | { t: 'func'; name: string; args: Node[]; pos: number }
   | { t: 'unary'; op: '-' | '+' | '@'; e: Node }
   | { t: 'pct'; e: Node }
-  | { t: 'bin'; op: string; l: Node; r: Node }
+  /** paren: written inside parentheses (Excel's near-zero rule skips those). */
+  | { t: 'bin'; op: string; l: Node; r: Node; paren?: boolean }
   | { t: 'range'; l: Node; r: Node }
   | { t: 'spill'; e: Node }
   | { t: 'array'; rows: Node[][] }
@@ -156,7 +157,7 @@ class Parser {
         const e = this.expr(0);
         const close = this.next();
         if (!close || close.type !== 'rparen') this.fail('Missing a closing parenthesis ")".', close);
-        return e;
+        return e.t === 'bin' ? { ...e, paren: true } : e;
       }
       case 'lbrace':
         return this.array(t);
