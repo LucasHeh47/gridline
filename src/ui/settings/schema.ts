@@ -18,6 +18,7 @@ export const SECTIONS: SectionDef[] = [
   { id: 'smart', label: 'Advanced format', icon: L.Sparkles, description: 'How Advanced format styles your data.' },
   { id: 'files', label: 'Files & saving', icon: L.FileSpreadsheet, description: 'Opening, autosave and CSV options.' },
   { id: 'live', label: 'Live data', icon: L.CloudDownload, description: 'NFL stats, stock prices and exchange rates.' },
+  { id: 'macros', label: 'Macros', icon: L.SquareCode, description: 'Security for workbooks with macros, and automatic macros.' },
   { id: 'nfl', label: 'Sports', icon: L.Trophy, description: 'Defaults for NFL data and the sports presets.' },
   { id: 'charts', label: 'Charts', icon: L.ChartColumn, description: 'Colors and defaults for new charts.' },
   { id: 'status', label: 'Status bar', icon: L.PanelBottom, description: 'Totals and controls in the bottom bar.' },
@@ -59,7 +60,7 @@ export const SETTINGS: SettingDef[] = [
   { id: 'ribbon.labels', section: 'ribbon', group: 'Size', label: 'Button labels', description: 'Show text next to icons in the full ribbon.', type: 'toggle', default: true, refresh: ['ribbon', 'layout'] },
   { id: 'ribbon.groupLabels', section: 'ribbon', group: 'Size', label: 'Group names', description: 'The small names under each group (Font, Alignment…).', type: 'toggle', default: true, refresh: ['ribbon', 'layout'] },
   { id: 'ribbon.largeIcons', section: 'ribbon', group: 'Size', label: 'Large icons', type: 'toggle', default: false, refresh: ['ribbon', 'layout'] },
-  { id: 'ribbon.tabs', section: 'ribbon', group: 'Tabs', label: 'Tabs to show', description: 'Home is always shown.', type: 'multi', default: ['insert', 'formulas', 'data', 'live', 'view', 'help'], options: opts(['insert', 'Insert'], ['formulas', 'Formulas'], ['data', 'Data'], ['live', 'Live Data'], ['view', 'View'], ['help', 'Help']), refresh: ['ribbon'] },
+  { id: 'ribbon.tabs', section: 'ribbon', group: 'Tabs', label: 'Tabs to show', description: 'Home is always shown.', type: 'multi', default: ['insert', 'formulas', 'data', 'live', 'automate', 'view', 'help'], options: opts(['insert', 'Insert'], ['formulas', 'Formulas'], ['data', 'Data'], ['live', 'Live Data'], ['automate', 'Automate'], ['view', 'View'], ['help', 'Help']), refresh: ['ribbon'] },
   { id: 'ribbon.startTab', section: 'ribbon', group: 'Tabs', label: 'Tab shown when Gridline opens', type: 'select', default: 'home', options: opts(['home', 'Home'], ['last', 'The last tab I used']), refresh: [] },
   { id: 'ribbon.wheelTabs', section: 'ribbon', group: 'Tabs', label: 'Scroll over the tabs to switch between them', type: 'toggle', default: true },
   { id: 'ribbon.autoClose', section: 'ribbon', group: 'Tabs', label: 'Close the pop-up ribbon after a command', description: 'Applies when the ribbon is set to "Tabs only".', type: 'toggle', default: true },
@@ -185,6 +186,17 @@ export const SETTINGS: SettingDef[] = [
   } } },
   { id: 'keyboard.list', section: 'keyboard', group: 'Shortcuts', label: 'All keyboard shortcuts', type: 'action', action: { label: 'Show', run: (app) => app.commands.run('help.shortcuts') } },
 
+  // ---------- Macros ----------
+  { id: 'macros.security', section: 'macros', group: 'Security', label: 'When a file contains macros', description: 'Macros are small programs inside a workbook. They can change your workbook, so only run macros from people you trust. Macros in Gridline can\'t open other files or programs.', type: 'select', default: 'ask', options: opts(['ask', 'Ask me first (recommended)'], ['enable', 'Always run them'], ['disable', 'Never run them']), keywords: 'vba trust enable disable security' },
+  { id: 'macros.events', section: 'macros', group: 'Security', label: 'Run automatic macros', description: 'Code like Workbook_Open and Worksheet_Change, and macros set to run when the file opens or cells change.', type: 'toggle', default: true, keywords: 'events triggers workbook_open' },
+  { id: 'macros.forgetTrusted', section: 'macros', group: 'Security', label: 'Files you chose to always trust', type: 'action', action: { label: 'Forget them', run: () => {
+    try {
+      localStorage.removeItem('gridline.trustedMacroFiles');
+    } catch {
+      // ignore
+    }
+  } } },
+
   // ---------- Updates ----------
   { id: 'updates.version', section: 'updates', group: 'Version', label: 'Installed version', type: 'info', info: async () => {
     const v = await platform.appVersion();
@@ -194,7 +206,7 @@ export const SETTINGS: SettingDef[] = [
   { id: 'updates.whatsNew', section: 'updates', group: 'Version', label: "What's new in this version", type: 'action', action: { label: 'Show', run: (app) => app.updates.showWhatsNew() } },
   { id: 'updates.onStartup', section: 'updates', group: 'Automatic updates', label: 'Check for updates when Gridline starts', type: 'toggle', default: true, desktopOnly: true },
   { id: 'updates.autoDownload', section: 'updates', group: 'Automatic updates', label: 'Download updates in the background', description: "You're still asked before anything is installed.", type: 'toggle', default: false, desktopOnly: true },
-  { id: 'updates.devBranch', section: 'updates', group: 'Automatic updates', label: 'Developer branch', description: 'Get development builds of Gridline as soon as they are made. They have the newest features first, but may have bugs. Turning this off keeps your current version until the next regular release.', type: 'toggle', default: false, desktopOnly: true, keywords: 'beta preview development pre-release channel', apply: (v: boolean, app: App) => app.updates?.devBranchChanged(v) },
+  { id: 'updates.devBranch', section: 'updates', group: 'Automatic updates', label: 'Developer branch', description: 'Get development builds of Gridline as soon as they are made. They have the newest features first, but may have bugs. Turning this off keeps your current version until the next regular release.', type: 'toggle', default: false, desktopOnly: true, keywords: 'beta preview development pre-release channel', apply: (v: boolean, app: App) => app.updates?.devBranchChanged(v), refresh: ['ribbon'] },
   { id: 'updates.showNotes', section: 'updates', group: 'Automatic updates', label: "Show what's new after updating", type: 'toggle', default: true },
 ];
 

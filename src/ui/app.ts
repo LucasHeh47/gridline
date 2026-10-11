@@ -20,7 +20,11 @@ import type { StylePatch } from '../core/styles';
 import { Sheet, Workbook } from '../core/workbook';
 import type { OpenedFile, SaveKind } from '../shared/api';
 import { advancedFormat } from './advancedFormat';
+import { STEP_EXAMPLES } from '../core/macros/steps';
 import { ChartLayer } from './charts/ChartLayer';
+import { ButtonLayer } from './macros/ButtonLayer';
+import { MacroController } from './macros/MacroController';
+import { MacroEditor } from './macros/MacroEditor';
 import { Commands } from './commands';
 import { showContextMenu } from './contextMenu';
 import { debounce, h } from './dom';
@@ -86,7 +90,12 @@ function shade(hex: string, amt: number): string {
 }
 
 /** File types a workbook can be saved as. */
-type DocKind = 'xlsx' | 'csv' | 'tsv';
+type DocKind = 'xlsx' | 'xlsm' | 'csv' | 'tsv';
+
+interface SaveOpts {
+  /** Saving was started by a macro (ThisWorkbook.Save): don't run Workbook_BeforeSave again. */
+  fromMacro?: boolean;
+}
 
 /** Preferences saved by 1.0.0 also held the theme, which is now a setting. */
 type SavedPrefs = Prefs & { theme?: string; adaptColors?: boolean };
@@ -118,6 +127,9 @@ export class App {
   titlebar: TitleBar;
   panel: SidePanel;
   charts: ChartLayer;
+  buttons: ButtonLayer;
+  macros: MacroController;
+  macroEditor: MacroEditor;
   commands: Commands;
   findBar: FindBar;
   showFormulas = false;
@@ -147,6 +159,18 @@ export class App {
     this.settings.drop('updates.channel');
     const tabs = this.settings.raw('ribbon.tabs');
     if (Array.isArray(tabs) && tabs.includes('mine')) this.settings.set('ribbon.tabs', [...tabs.filter((t) => t !== 'mine'), 'live']);
+    // 1.0.3 added the Automate tab: show it to people who customized their tabs before it existed
+    const tabsNow = this.settings.raw('ribbon.tabs');
+    if (Array.isArray(tabsNow) && !tabsNow.includes('automate') && !localStorage.getItem('gridline.seenAutomateTab')) {
+      const list = [...tabsNow];
+      list.splice(Math.max(0, list.indexOf('view')), 0, 'automate');
+      this.settings.set('ribbon.tabs', list);
+    }
+    try {
+      localStorage.setItem('gridline.seenAutomateTab', '1');
+    } catch {
+      // ignore
+    }
     this.prefs = { recentCommands: saved.recentCommands, showFormulaBarExpanded: saved.showFormulaBarExpanded };
     for (const d of this.settings.defs) d.apply?.(this.settings.get(d.id) as never, this);
     this.applyTheme();
@@ -156,6 +180,7 @@ export class App {
     });
     this.doc = new Doc(this.blankWorkbook());
     this.cf = new CFEvaluator(this.doc);
+    this.macros = new MacroController(this);
     this.commands = new Commands(this);
     this.grid = new GridView(this);
     this.editor = new EditController(this);
@@ -168,14 +193,16 @@ export class App {
     this.tabs = new SheetTabs(this);
     this.panel = new SidePanel(this);
     this.charts = new ChartLayer(this);
+    this.buttons = new ButtonLayer(this);
+    this.macroEditor = new MacroEditor(this);
     this.findBar = new FindBar(this);
-    this.grid.overlay.append(this.charts.el, this.editor.cellBox);
+    this.grid.overlay.append(this.charts.el, this.buttons.el, this.editor.cellBox);
     this.grid.el.append(this.findBar.el);
 
     const main = h('div', { class: 'main' }, this.grid.el, this.panel.el);
     const bottom = h('footer', { class: 'bottombar' }, this.tabs.el, this.statusbar.el);
     this.grid.el.append(this.explainerEl);
-    root.append(this.titlebar.el, this.ribbon.el, this.formulaBar.el, main, bottom);
+    root.append(this.titlebar.el, this.ribbon.el, this.formulaBar.el, this.macros.banner, main, this.macroEditor.el, bottom);
 
     external.fetcher = async (url, opts) => {
       if (!this.settings.bool('live.enabled')) throw new FetchError('live data is turned off (Settings → Live data)');
@@ -316,7 +343,7 @@ export class App {
       this.timers.push(
         setInterval(() => {
           const d = this.doc;
-          if (d.dirty && d.filePath && d.fileType === 'xlsx' && !this.isEditing) void this.save().then((ok) => ok && this.statusbar.flash('AutoSaved'));
+          if (d.dirty && d.filePath && (d.fileType === 'xlsx' || d.fileType === 'xlsm') && !this.isEditing && !this.macros.running) void this.save().then((ok) => ok && this.statusbar.flash('AutoSaved'));
         }, autosave * 60_000),
       );
     }
@@ -369,6 +396,34 @@ export class App {
       this.focusGrid();
     });
     this.root.append(this.settingsView.el);
+  }
+
+  /** Opens the macro editor under the grid, optionally at a module and line or a step macro. */
+  openMacroEditor(target?: string, line?: number): void {
+    if (this.isEditing && !this.commitEdit()) return;
+    this.macroEditor.open(target, line);
+  }
+
+  closeMacroEditor(): void {
+    this.macroEditor.close();
+    this.focusGrid();
+  }
+
+  /** Example step macros for the Automate tab. */
+  macroExamples(): MenuItem[] {
+    return STEP_EXAMPLES.map((ex) => ({
+      label: ex.name,
+      hint: ex.description.length > 48 ? ex.description.slice(0, 46) + '…' : ex.description,
+      run: () => {
+        this.openMacroEditor();
+        void this.macroEditor.newStepMacro(ex);
+      },
+    }));
+  }
+
+  /** Opens a page of the online user guide. */
+  openGuide(topic: string): void {
+    platform.openExternal(`https://github.com/LucasHeh47/gridline/blob/main/docs/${topic}.md`);
   }
 
   /** Starts a formula with a function, or adds it to the formula being edited. */
@@ -440,6 +495,7 @@ export class App {
   }
 
   private onDocEvent(e: DocEvent): void {
+    if (e.type === 'change' && e.direction === 'do') this.macros.cellsChanged(e.tx);
     if (e.type === 'change' && e.direction !== 'do') {
       const snap = e.direction === 'undo' ? e.tx.selectionBefore : e.tx.selectionAfter;
       if (snap && this.doc.wb.sheetById(snap.sheetId)) {
@@ -492,6 +548,8 @@ export class App {
     this.statusbar?.refresh();
     this.titlebar?.refresh();
     this.charts?.sync();
+    this.buttons?.sync();
+    this.macroEditor?.refresh();
     this.panel?.refresh();
     this.findBar?.refresh();
     platform.setDirty(this.doc.dirty);
@@ -579,9 +637,11 @@ export class App {
       prev.view.scrollX = this.grid.scrollX;
       prev.view.scrollY = this.grid.scrollY;
     }
+    const changed = this.selSheetId !== id;
     this.selSheetId = id;
     wb.activeSheetId = id;
     if (resetSelection) this.sel.setCell(s, s.view.activeRow, s.view.activeCol);
+    if (changed) this.macros?.sheetActivated(s);
     this.grid.relayout();
     this.grid.restoreScroll();
     this.cf.invalidate();
@@ -776,6 +836,8 @@ export class App {
       const target = e.target as HTMLElement;
       const inField = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.isContentEditable;
       if (target === ft) return;
+      // Macro shortcuts (and Esc to stop a running macro)
+      if (this.macros.running ? this.macros.handleKey(e) : !inField && !this.isEditing && this.macros.handleKey(e)) return;
       const cmd = this.commands.match(e);
       if (!cmd) return;
       if (inField && !cmd.global) return;
@@ -787,6 +849,10 @@ export class App {
 
   private onGridKey(e: KeyboardEvent): void {
     if (e.isComposing) return;
+    if (this.macros.handleKey(e)) {
+      e.preventDefault();
+      return;
+    }
     const cmd = this.commands.match(e);
     if (cmd) {
       e.preventDefault();
@@ -1098,6 +1164,7 @@ export class App {
   onGridScroll(): void {
     this.editor.position();
     this.charts?.position();
+    this.buttons?.position();
   }
 
   hoverCell(x: number, y: number, e: MouseEvent): void {
@@ -1334,6 +1401,7 @@ export class App {
     }
     if (this.doc.dirty && !(await this.confirmDiscard())) return;
     this.loadWorkbook(new Workbook(), null, 'Untitled', null);
+    void this.macros.workbookOpened(null, false);
   }
 
   /** Starts a preset. Opens in this window when it's empty, otherwise in a new one. Without an id, shows the presets. */
@@ -1359,6 +1427,7 @@ export class App {
     const wb = buildTemplate(id, { team: this.settings.str('nfl.team'), fantasyStat: scoring, currency: this.settings.str('live.currency') });
     if (!info || !wb) return;
     this.loadWorkbook(wb, null, info.name, null);
+    void this.macros.workbookOpened(null, false);
     this.statusbar.flash(`New ${info.name.toLowerCase()} — change the yellow cells to make it yours`);
   }
 
@@ -1404,14 +1473,13 @@ export class App {
     this.statusbar.flash(`Opening ${name}…`);
     try {
       let wb: Workbook;
-      let type: 'xlsx' | 'csv' | 'tsv';
+      let type: 'xlsx' | 'xlsm' | 'csv' | 'tsv';
       let warnings: string[] = [];
       if (ext === 'xlsx' || ext === 'xlsm') {
         const res = await readXlsx(f.data);
         wb = res.wb;
         warnings = res.warnings;
-        type = 'xlsx';
-        if (ext === 'xlsm') warnings.push('Macros (VBA) aren\'t supported. Saving creates a regular .xlsx without macros.');
+        type = ext === 'xlsm' || res.hasVba ? 'xlsm' : 'xlsx';
       } else if (ext === 'xls') {
         throw new Error('Old .xls files aren\'t supported. Open it in another app and save as .xlsx first.');
       } else {
@@ -1419,16 +1487,17 @@ export class App {
         type = ext === 'tsv' || (ext === 'txt' && text.includes('\t')) ? 'tsv' : 'csv';
         wb = csvToWorkbook(text, name, type === 'tsv' ? '\t' : undefined);
       }
-      this.loadWorkbook(wb, f.path, name, ext === 'xlsm' ? 'xlsx' : type);
-      if (ext === 'xlsm' && f.path) this.doc.filePath = null;
+      // An .xlsx with VBA code in it is saved as a new .xlsm, never over the original
+      this.loadWorkbook(wb, ext === 'xlsx' && type === 'xlsm' ? null : f.path, name, type);
       if (warnings.length) toast(warnings.join(' '), { ms: 9000 });
       this.statusbar.flash(`Opened ${name}`);
+      void this.macros.workbookOpened(f.path, true);
     } catch (err) {
       toast(`Couldn't open "${name}": ${(err as Error).message}`, { kind: 'error' });
     }
   }
 
-  private loadWorkbook(wb: Workbook, path: string | null, name: string, type: 'xlsx' | 'csv' | 'tsv' | null): void {
+  private loadWorkbook(wb: Workbook, path: string | null, name: string, type: 'xlsx' | 'xlsm' | 'csv' | 'tsv' | null): void {
     this.doc.load(wb);
     this.doc.filePath = path;
     this.doc.fileName = name;
@@ -1448,10 +1517,10 @@ export class App {
   }
 
   /** Saves to the current file (or asks where). Returns true when saved. */
-  async save(): Promise<boolean> {
+  async save(opts: SaveOpts = {}): Promise<boolean> {
     if (this.isEditing && !this.commitEdit()) return false;
     const d = this.doc;
-    if (!d.filePath || !isDesktop) return this.saveAs();
+    if (!d.filePath || !isDesktop) return this.saveAs(undefined, opts);
     if (d.fileType === 'csv' || d.fileType === 'tsv') {
       const choice = this.csvChoice ?? (this.hasNonCsvFeatures() && this.settings.bool('files.csvWarning') ? await this.askCsvChoice() : 'csv');
       if (choice === null) return false;
@@ -1464,20 +1533,54 @@ export class App {
       }
       return this.writeTo(d.filePath, d.fileType);
     }
-    return this.writeTo(d.filePath, 'xlsx');
+    if (this.hasVbaCode() && d.fileType !== 'xlsm') {
+      // A regular .xlsx can't hold VBA code
+      const choice = await this.askMacroFormat();
+      if (choice === null) return false;
+      if (choice === 'xlsm') {
+        const chosen = await platform.saveFileDialog(d.filePath.replace(/\.[^.\\/]+$/, '') + '.xlsm', 'xlsm');
+        if (!chosen) return false;
+        return this.writeTo(chosen, /\.xlsx$/i.test(chosen) ? 'xlsx' : 'xlsm', opts);
+      }
+    }
+    return this.writeTo(d.filePath, d.fileType === 'xlsm' ? 'xlsm' : 'xlsx', opts);
   }
 
-  async saveAs(kind?: SaveKind): Promise<boolean> {
+  private hasVbaCode(): boolean {
+    return !!this.doc.wb.macros?.hasCode;
+  }
+
+  private askMacroFormat(): Promise<'xlsm' | 'xlsx' | null> {
+    return dialog<'xlsm' | 'xlsx' | null>(
+      'This workbook has VBA macros',
+      'Regular .xlsx files can\'t hold VBA code. Save a macro-enabled copy (.xlsm) to keep your macros?',
+      [
+        { label: 'Save as .xlsm', value: 'xlsm', primary: true },
+        { label: 'Save without the code', value: 'xlsx', danger: true },
+        { label: 'Cancel', value: null },
+      ],
+      { cancelValue: null },
+    );
+  }
+
+  async saveAs(kind?: SaveKind, opts: SaveOpts = {}): Promise<boolean> {
     if (this.isEditing && !this.commitEdit()) return false;
     const base = this.doc.fileName.replace(/\.[^.]+$/, '') || 'Untitled';
-    const k: SaveKind = kind ?? 'xlsx';
+    const k: SaveKind = kind ?? (this.hasVbaCode() ? 'xlsm' : 'xlsx');
     const dir = this.doc.filePath ? this.doc.filePath.replace(/[\\/][^\\/]*$/, '') : '';
     const suggested = (dir ? dir + (dir.includes('\\') ? '\\' : '/') : '') + `${base}.${k}`;
     const path = await platform.saveFileDialog(suggested, k);
     if (!path) return false;
     const ext = (/\.([^.]+)$/.exec(path)?.[1] ?? k).toLowerCase();
-    const type: DocKind = ext === 'csv' ? 'csv' : ext === 'tsv' || ext === 'txt' ? 'tsv' : 'xlsx';
-    if (type !== 'xlsx' && this.hasNonCsvFeatures()) {
+    const type: DocKind = ext === 'csv' ? 'csv' : ext === 'tsv' || ext === 'txt' ? 'tsv' : ext === 'xlsm' ? 'xlsm' : 'xlsx';
+    if (type === 'xlsx' && this.hasVbaCode()) {
+      const ok = await dialog('Save without VBA code?', 'A regular .xlsx file can\'t hold VBA code, so your code macros won\'t be in this file. Choose .xlsm in the Save dialog to keep them.', [
+        { label: 'Save without the code', value: true, danger: true },
+        { label: 'Cancel', value: false },
+      ]);
+      if (!ok) return false;
+    }
+    if ((type === 'csv' || type === 'tsv') && this.hasNonCsvFeatures()) {
       const ok = await dialog(
         'Save as CSV?',
         'CSV files keep only the values of the current sheet. Formatting, formulas, charts and other sheets will not be saved in this file.',
@@ -1488,7 +1591,7 @@ export class App {
       );
       if (!ok) return false;
     }
-    return this.writeTo(path, type);
+    return this.writeTo(path, type, opts);
   }
 
   async exportCsv(kind: 'csv' | 'tsv'): Promise<void> {
@@ -1530,10 +1633,11 @@ export class App {
     );
   }
 
-  private async writeTo(path: string, type: DocKind): Promise<boolean> {
+  private async writeTo(path: string, type: DocKind, opts: SaveOpts = {}): Promise<boolean> {
+    if (!opts.fromMacro && !(await this.macros.beforeSave(path !== this.doc.filePath))) return false;
     try {
       this.statusbar.flash('Saving…');
-      const data = type === 'xlsx' ? await writeXlsx(this.doc) : encodeCSV(sheetToCSV(this.doc, this.sheet, type === 'tsv' ? '\t' : undefined));
+      const data = type === 'xlsx' || type === 'xlsm' ? await writeXlsx(this.doc, { macroEnabled: type === 'xlsm' }) : encodeCSV(sheetToCSV(this.doc, this.sheet, type === 'tsv' ? '\t' : undefined));
       const res = await platform.saveFile(path, data);
       if (!res.ok) {
         toast(res.error ?? 'Saving failed.', { kind: 'error' });

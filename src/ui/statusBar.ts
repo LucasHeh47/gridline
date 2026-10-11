@@ -71,6 +71,13 @@ export class StatusBar {
     this.mode.classList.toggle('edit', m !== 'Ready');
   }
 
+  /** Shows text until it's cleared with null (a macro's Application.StatusBar). */
+  hold(text: string | null): void {
+    clearTimeout(this.msgTimer);
+    this.msg.innerHTML = '';
+    if (text) this.msg.append(h('span', null, text));
+  }
+
   /** Shows a short message (optionally with an action button). */
   flash(text: string, action?: { label: string; run: () => void }): void {
     clearTimeout(this.msgTimer);

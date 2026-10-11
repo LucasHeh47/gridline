@@ -10,6 +10,7 @@ import { applyTint, type BorderSide, type BorderStyle, type HAlign, type Style, 
 import { ErrorValue, parseErrorCode, type ErrorCode, type Scalar } from '../values';
 import { Sheet, Workbook, type CFRule, type CFStyle, type CFValue, type Cell } from '../workbook';
 import { prepareForExcelJS, readCharts, readNotes, writeCharts } from './xlsxCharts';
+import { readMacros, writeMacros } from './xlsxMacros';
 
 type ExcelJS = typeof ExcelJSTypes;
 
@@ -372,6 +373,8 @@ const ptFromPx = (px: number) => Math.round(px * 0.75 * 100) / 100;
 export interface ReadResult {
   wb: Workbook;
   warnings: string[];
+  /** The file contains VBA code. */
+  hasVba: boolean;
 }
 
 export async function readXlsx(data: Uint8Array): Promise<ReadResult> {
@@ -546,6 +549,16 @@ export async function readXlsx(data: Uint8Array): Promise<ReadResult> {
     warnings.add('Charts in this file couldn\'t be read.');
   }
 
+  // Macros: VBA code, sheet code names and Gridline's step macros/buttons
+  let hasVba = false;
+  try {
+    const macros = await readMacros(data, wb);
+    hasVba = macros.hasVba;
+    for (const w of macros.warnings) warnings.add(w);
+  } catch {
+    warnings.add("The macros in this file couldn't be read.");
+  }
+
   // Note any functions we can't calculate (their saved values are kept).
   const unknown = new Set<string>();
   for (const s of wb.sheets)
@@ -557,12 +570,13 @@ export async function readXlsx(data: Uint8Array): Promise<ReadResult> {
     const list = [...unknown].slice(0, 6).join(', ');
     warnings.add(`Some functions aren't supported yet (${list}); their last saved values are shown.`);
   }
-  return { wb, warnings: [...warnings] };
+  return { wb, warnings: [...warnings], hasVba };
 }
 
 // ---------- write ----------
 
-export async function writeXlsx(doc: Doc): Promise<Uint8Array> {
+/** With `macroEnabled`, VBA code is included and the result must be saved as .xlsm. */
+export async function writeXlsx(doc: Doc, opts: { macroEnabled?: boolean } = {}): Promise<Uint8Array> {
   const ExcelJS = await loadExcelJS();
   const xwb = new ExcelJS.Workbook();
   xwb.creator = 'Gridline';
@@ -687,9 +701,9 @@ export async function writeXlsx(doc: Doc): Promise<Uint8Array> {
     }
   }
 
-  const buf = new Uint8Array((await xwb.xlsx.writeBuffer()) as ArrayBuffer);
-  if (wb.sheets.some((s) => s.charts.length)) return writeCharts(buf, doc);
-  return buf;
+  let buf: Uint8Array = new Uint8Array((await xwb.xlsx.writeBuffer()) as ArrayBuffer);
+  if (wb.sheets.some((s) => s.charts.length)) buf = await writeCharts(buf, doc);
+  return writeMacros(buf, wb, !!opts.macroEnabled);
 }
 
 function scalarText(v: Scalar): string {

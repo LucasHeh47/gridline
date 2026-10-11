@@ -9,7 +9,9 @@ export type DocEvent =
   | { type: 'reset' }
   | { type: 'saved' }
   /** Downloaded data arrived and formulas were recalculated. */
-  | { type: 'data' };
+  | { type: 'data' }
+  /** Something outside the undo history changed (macros), or a running macro wants a repaint. */
+  | { type: 'meta' };
 
 export class Doc {
   wb: Workbook;
@@ -18,7 +20,7 @@ export class Doc {
   filePath: string | null = null;
   fileName = 'Untitled';
   /** Format the document was loaded from / last saved as. */
-  fileType: 'xlsx' | 'csv' | 'tsv' | null = null;
+  fileType: 'xlsx' | 'xlsm' | 'csv' | 'tsv' | null = null;
   private savedVersion = 0;
   private listeners = new Set<(e: DocEvent) => void>();
   /** Hook for the UI to attach selection state to transactions. */
@@ -75,6 +77,17 @@ export class Doc {
 
   private emit(e: DocEvent): void {
     for (const l of this.listeners) l(e);
+  }
+
+  /** Marks the document as changed for edits that aren't undoable (editing macro code). */
+  touch(): void {
+    this.history.version++;
+    this.emit({ type: 'meta' });
+  }
+
+  /** Starts an edit made in many steps over time (a running macro) that undoes as one action. */
+  beginLive(label: string): LiveEdit {
+    return new LiveEdit(this, label, (e) => this.emit(e), (tx) => this.syncEngine(tx));
   }
 
   /** Runs `fn` as a single undoable action. */
@@ -138,5 +151,80 @@ export class Doc {
       const touched = tx.touchedCells();
       if (touched.length) this.engine.update(touched);
     }
+  }
+}
+
+/**
+ * An edit applied in many small steps while code runs. Each step takes effect immediately; formulas
+ * recalculate before anything is read back; finish() records everything as one undo step.
+ */
+export class LiveEdit {
+  readonly tx: Transaction;
+  private pending: Transaction[] = [];
+  private closed = false;
+
+  constructor(
+    private doc: Doc,
+    label: string,
+    private emit: (e: DocEvent) => void,
+    private sync: (tx: Transaction) => void,
+  ) {
+    this.tx = new Transaction(label, doc.wb);
+    this.tx.source = 'macro';
+    this.tx.selectionBefore = doc.selectionProvider?.() ?? undefined;
+  }
+
+  get isOpen(): boolean {
+    return !this.closed;
+  }
+
+  /** Applies a change now. Structural changes (rows, sheets) recalculate right away. */
+  apply(fn: (tx: Transaction) => void): void {
+    if (this.closed) throw new Error('This edit has already finished.');
+    const step = new Transaction(this.tx.label, this.doc.wb);
+    try {
+      fn(step);
+    } finally {
+      if (!step.isEmpty) {
+        this.tx.absorb(step);
+        if (step.structural) {
+          this.flushPending();
+          this.sync(step);
+        } else this.pending.push(step);
+      }
+    }
+  }
+
+  /** Recalculates formulas affected by changes so far (call before reading values). */
+  settle(): void {
+    this.flushPending();
+  }
+
+  private flushPending(): void {
+    if (!this.pending.length) return;
+    const merged = new Transaction(this.tx.label, this.doc.wb);
+    for (const p of this.pending) merged.absorb(p);
+    this.pending = [];
+    this.sync(merged);
+  }
+
+  /** Lets the screen show progress while the code is still running. */
+  repaint(): void {
+    this.settle();
+    this.emit({ type: 'meta' });
+  }
+
+  /** Records the whole edit as one undoable action. */
+  finish(): void {
+    if (this.closed) return;
+    this.settle();
+    this.closed = true;
+    if (this.tx.isEmpty) {
+      this.emit({ type: 'meta' });
+      return;
+    }
+    this.tx.selectionAfter = this.doc.selectionProvider?.() ?? undefined;
+    this.doc.history.push(this.tx);
+    this.emit({ type: 'change', tx: this.tx, direction: 'do' });
   }
 }

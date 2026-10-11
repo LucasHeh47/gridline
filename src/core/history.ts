@@ -27,6 +27,8 @@ export class Transaction {
   structural = false;
   selectionBefore?: SelectionSnapshot;
   selectionAfter?: SelectionSnapshot;
+  /** Set for changes made by a macro, so they don't fire "cell changed" events. */
+  source?: 'macro';
   private cellIndex = new Map<string, Change & { k: 'cell' }>();
 
   constructor(
@@ -92,6 +94,12 @@ export class Transaction {
     target[prop] = value;
     if (structural) this.structural = true;
     if ((target as unknown as Sheet).invalidateBounds) (target as unknown as Sheet).invalidateBounds();
+  }
+
+  /** Appends the changes of another (already applied) transaction, for edits made in steps. */
+  absorb(other: Transaction): void {
+    for (const ch of other.changes) this.changes.push(ch);
+    if (other.structural) this.structural = true;
   }
 
   /** Cells whose content changed, for incremental recalculation. */

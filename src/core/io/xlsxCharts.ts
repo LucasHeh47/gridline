@@ -11,11 +11,11 @@ const CT_DRAWING = 'application/vnd.openxmlformats-officedocument.drawing+xml';
 const CT_CHART = 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml';
 const EMU = 9525;
 
-function esc(s: string): string {
+export function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function unesc(s: string): string {
+export function unesc(s: string): string {
   return s
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
@@ -25,7 +25,7 @@ function unesc(s: string): string {
     .replace(/&amp;/g, '&');
 }
 
-function resolvePath(base: string, target: string): string {
+export function resolvePath(base: string, target: string): string {
   if (target.startsWith('/')) return target.slice(1);
   const parts = base.split('/');
   parts.pop();
@@ -36,7 +36,7 @@ function resolvePath(base: string, target: string): string {
   return parts.join('/');
 }
 
-function relsPathFor(path: string): string {
+export function relsPathFor(path: string): string {
   const i = path.lastIndexOf('/');
   return `${path.slice(0, i)}/_rels/${path.slice(i + 1)}.rels`;
 }
@@ -47,7 +47,7 @@ interface Rel {
   target: string;
 }
 
-function parseRels(xml: string): Rel[] {
+export function parseRels(xml: string): Rel[] {
   const out: Rel[] = [];
   const re = /<Relationship\b([^>]*)\/?>/g;
   let m: RegExpExecArray | null;
@@ -58,7 +58,7 @@ function parseRels(xml: string): Rel[] {
   return out;
 }
 
-async function sheetPaths(zip: JSZip): Promise<Map<string, string>> {
+export async function sheetPaths(zip: JSZip): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   const wbXml = await zip.file('xl/workbook.xml')?.async('string');
   const relsXml = await zip.file('xl/_rels/workbook.xml.rels')?.async('string');

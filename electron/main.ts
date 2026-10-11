@@ -180,7 +180,9 @@ ipcMain.handle('file:save-dialog', async (e, defaultName: string, kind: string) 
         ? [{ name: 'Tab-separated text', extensions: ['tsv', 'txt'] }]
         : kind === 'json'
           ? [{ name: 'Gridline settings', extensions: ['json'] }]
-          : [{ name: 'Excel workbook', extensions: ['xlsx'] }];
+          : kind === 'xlsm'
+            ? [{ name: 'Excel macro-enabled workbook', extensions: ['xlsm'] }, { name: 'Excel workbook (no VBA code)', extensions: ['xlsx'] }]
+            : [{ name: 'Excel workbook', extensions: ['xlsx'] }, { name: 'Excel macro-enabled workbook', extensions: ['xlsm'] }];
   const res = await dialog.showSaveDialog(win!, { title: kind === 'json' ? 'Export settings' : 'Save as', defaultPath: defaultName, filters });
   if (res.canceled || !res.filePath) return null;
   return allow(res.filePath);

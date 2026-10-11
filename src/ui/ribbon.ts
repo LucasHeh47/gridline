@@ -127,6 +127,7 @@ export class Ribbon {
       { id: 'formulas', label: 'Formulas', groups: () => this.formulaGroups() },
       { id: 'data', label: 'Data', groups: () => this.dataGroups() },
       { id: 'live', label: 'Live Data', groups: () => this.liveGroups() },
+      { id: 'automate', label: 'Automate', groups: () => this.automateGroups() },
       { id: 'view', label: 'View', groups: () => this.viewGroups() },
       { id: 'help', label: 'Help', groups: () => this.helpGroups() },
     ];
@@ -736,6 +737,33 @@ export class Ribbon {
         this.stack([this.cmd('app.settingsLive', { label: 'Live data settings' })], [this.cmd('data.clearCache', { label: 'Delete downloaded data' })]),
       ]),
     ];
+  }
+
+  private automateGroups(): GroupDef[] {
+    const app = this.app;
+    const groups = [
+      this.group('macros', 'Macros', L.SquareCode, () => [
+        this.menu(L.Play, 'Run macro', () => [...app.macros.runMenu(), { separator: true }, this.item('macro.run', 'Choose a macro…')], { big: true }),
+        this.cmd('macro.editor', { big: true, label: 'Macro editor' }),
+        this.stack([this.cmd('macro.new', { label: 'New macro' })], [this.cmd('macro.stop', { label: 'Stop' })]),
+      ]),
+    ];
+    if (app.macros.stepsAvailable) {
+      groups.push(
+        this.group('steps', 'No code (Beta)', L.ListChecks, () => [
+          this.cmd('macro.newSteps', { big: true, label: 'Step macro' }),
+          this.menu(L.Lightbulb, 'Examples', () => app.macroExamples(), { big: true }),
+        ]),
+      );
+    }
+    groups.push(
+      this.group('triggers', 'Run it with', L.Zap, () => [
+        this.cmd('macro.button', { big: true, label: 'Button' }),
+        this.stack([this.cmd('macro.shortcut', { label: 'Shortcut' })], [this.cmd('macro.triggers', { label: 'Automatically' })]),
+      ]),
+      this.group('security', 'Security', L.ShieldCheck, () => [this.cmd('macro.settings', { big: true, label: 'Macro settings' })]),
+    );
+    return groups;
   }
 
   private helpGroups(): GroupDef[] {

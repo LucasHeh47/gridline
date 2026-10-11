@@ -332,6 +332,25 @@ export class Commands {
     } });
     a({ id: 'data.trace', title: 'Show cells this formula uses', category: 'Data', icon: L.Workflow, keywords: 'trace precedents', run: () => tracePrecedents(app) });
 
+    // ---------- Automate (macros) ----------
+    a({ id: 'macro.editor', title: 'Macro editor', category: 'Automate', keys: ['Alt+F11'], icon: L.SquareCode, keywords: 'vba code visual basic macros script automate', global: true, run: () => (app.macroEditor.isOpen ? app.closeMacroEditor() : app.openMacroEditor()) });
+    a({ id: 'macro.run', title: 'Run a macro…', category: 'Automate', keys: ['Alt+F8'], icon: L.Play, keywords: 'vba execute automate', global: true, run: async () => {
+      const m = await app.macros.pickMacro('Run a macro');
+      if (m) await app.macros.run(m);
+    } });
+    a({ id: 'macro.new', title: 'New macro (VBA code)', category: 'Automate', icon: L.FileCode, keywords: 'vba sub write code', run: () => {
+      app.openMacroEditor();
+      app.macroEditor.newModule();
+    } });
+    a({ id: 'macro.newSteps', title: 'New step macro (no code) — Beta', category: 'Automate', icon: L.ListChecks, keywords: 'no code blocks easy builder steps automate', enabled: () => app.macros.stepsAvailable, run: () => {
+      app.openMacroEditor();
+      void app.macroEditor.newStepMacro();
+    } });
+    a({ id: 'macro.button', title: 'Add a button that runs a macro', category: 'Automate', icon: L.MousePointerClick, keywords: 'macro button sheet click', run: () => void app.macros.addButtonFor(null) });
+    a({ id: 'macro.shortcut', title: 'Give a macro a keyboard shortcut', category: 'Automate', icon: L.Keyboard, keywords: 'hotkey key macro', run: () => void app.macros.assignShortcutFor(null) });
+    a({ id: 'macro.triggers', title: 'Run a macro automatically…', category: 'Automate', icon: L.Zap, keywords: 'trigger event open change automatic', run: () => void app.macros.triggersDialog() });
+    a({ id: 'macro.stop', title: 'Stop the running macro', category: 'Automate', icon: L.Square, keywords: 'cancel break', global: true, enabled: () => app.macros.running, run: () => app.macros.stop() });
+    a({ id: 'macro.settings', title: 'Macro settings', category: 'Automate', icon: L.ShieldCheck, keywords: 'security trust enable disable macros', global: true, run: () => app.openSettings('macros') });
     a({ id: 'nfl.panel', title: 'NFL data — insert player, team, schedule or standings stats', category: 'Insert', icon: L.Trophy, keywords: 'football stats nflverse player team qb fantasy', run: () => app.panel.open('nfl') });
     const nfl = (mode: string, title: string, icon: IconNode) => a({ id: `nfl.${mode}`, title: `NFL: ${title}`, category: 'Insert', icon, keywords: 'football nfl', run: () => app.panel.open('nfl', mode) });
     nfl('player', 'player stats', L.User);

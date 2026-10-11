@@ -13,7 +13,7 @@ export interface RecentFile {
   pinned?: boolean;
 }
 
-export type SaveKind = 'xlsx' | 'csv' | 'tsv' | 'json';
+export type SaveKind = 'xlsx' | 'xlsm' | 'csv' | 'tsv' | 'json';
 
 export interface SaveResult {
   ok: boolean;

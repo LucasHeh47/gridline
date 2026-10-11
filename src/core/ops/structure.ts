@@ -134,6 +134,19 @@ export function restructure(tx: Transaction, wb: Workbook, sheet: Sheet, axis: '
     tx.setProp(s, 'charts', charts);
   }
 
+  if (sheet.buttons.length) {
+    const buttons = sheet.buttons.map((b) => {
+      const anchor = { ...b.anchor };
+      const idx = shiftIndex(axis === 'row' ? anchor.row : anchor.col, ch);
+      if (idx !== null) {
+        if (axis === 'row') anchor.row = idx;
+        else anchor.col = idx;
+      }
+      return { ...b, anchor };
+    });
+    tx.setProp(sheet, 'buttons', buttons);
+  }
+
   // 5. Defined names
   if (wb.names.size) {
     const names = new Map(wb.names);

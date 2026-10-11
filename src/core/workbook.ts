@@ -1,5 +1,6 @@
 // The workbook data model: sheets, cells, and sheet-level features.
 import { cellKey, keyCol, keyRow, MAX_COLS, MAX_ROWS, type Range } from './address';
+import type { MacroProject, SheetButton } from './macros/project';
 import { StyleTable } from './styles';
 import type { Scalar } from './values';
 
@@ -149,6 +150,10 @@ export class Sheet {
   cf: CFRule[] = [];
   filter: FilterState | null = null;
   charts: ChartDef[] = [];
+  /** Buttons that run macros. */
+  buttons: SheetButton[] = [];
+  /** The sheet's name in VBA code (Sheet1), which stays the same when the tab is renamed. */
+  codeName?: string;
   tabColor?: string;
   showGrid = true;
   hidden = false;
@@ -258,6 +263,8 @@ export class Workbook {
   styles = new StyleTable();
   names = new Map<string, DefinedName>();
   activeSheetId = 0;
+  /** Macros saved in the workbook (null when it has none). */
+  macros: MacroProject | null = null;
 
   constructor(empty = false) {
     if (!empty) {

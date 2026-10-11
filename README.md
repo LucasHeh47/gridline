@@ -1,6 +1,6 @@
 # Gridline
 
-**A free, fast, dark-mode spreadsheet for Windows.** It opens and saves Excel (`.xlsx`) and CSV files, has 250+ formulas, and can pull live data into your sheets: stock and crypto prices, exchange rates, NFL stats, weather and more.
+**A free, fast, dark-mode spreadsheet for Windows.** It opens and saves Excel (`.xlsx` and `.xlsm`) and CSV files, has 250+ formulas, runs Excel macros, and can pull live data into your sheets: stock and crypto prices, exchange rates, NFL stats, weather and more.
 
 ![The Gridline Home page](docs/images/home.png)
 
@@ -11,7 +11,7 @@
 
    | File | What it is |
    | --- | --- |
-   | **`Gridline-Setup-x.y.z.exe`** | **The installer (recommended).** It adds Gridline to the Start menu and the desktop, opens `.xlsx` and `.csv` files with a double-click, and updates itself. |
+   | **`Gridline-Setup-x.y.z.exe`** | **The installer (recommended).** It adds Gridline to the Start menu and the desktop, opens `.xlsx`, `.xlsm` and `.csv` files with a double-click, and updates itself. |
    | `Gridline-Portable-x.y.z.exe` | A single file you can run from anywhere (for example a USB stick) without installing. It doesn't update itself; it tells you when a new version is available. |
 
 3. Run the file you downloaded.
@@ -31,6 +31,7 @@
   - **Finance:** stock quotes and history, crypto prices, exchange rates.
   - **Sports:** NFL player and team stats, schedules, standings and leaders, back to 1999.
   - **World:** weather and forecasts, public holidays, country statistics.
+- **Macros.** Run and write VBA macros like in Excel, and open and save macro-enabled `.xlsm` files. Put a macro on a button, a keyboard shortcut, or run it when the file opens or cells change. A no-code **step builder** (Beta) lets anyone make a macro from plain-English steps. See **[Macros in Gridline](docs/macros.md)**.
 - **10 ready-made presets.** Monthly budget, loan calculator, debt payoff, net worth, stock portfolio, crypto portfolio, NFL team tracker, fantasy football, trip planner and project tracker.
 - **125 settings.** Theme, accent color, ribbon size, what Enter does, date format, AutoSave, CSV options and more.
 
@@ -42,6 +43,7 @@
 
 - **[User guide](docs/user-guide.md)**: everything from the basics to live data, settings and shortcuts.
 - **[Function reference](docs/functions.md)**: Gridline's own functions (live data and personal finance), with examples.
+- **[Macros](docs/macros.md)**: running and writing macros, the no-code step builder, and what VBA Gridline supports.
 - **[What's new](CHANGELOG.md)**: changes in each version.
 
 ## Updates

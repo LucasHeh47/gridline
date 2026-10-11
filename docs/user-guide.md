@@ -10,9 +10,10 @@
 8. [Live data](#8-live-data)
 9. [Presets](#9-presets)
 10. [Files, saving and Excel](#10-files-saving-and-excel)
-11. [Settings](#11-settings)
-12. [Keyboard shortcuts](#12-keyboard-shortcuts)
-13. [Troubleshooting](#13-troubleshooting)
+11. [Macros and automation](#11-macros-and-automation)
+12. [Settings](#12-settings)
+13. [Keyboard shortcuts](#13-keyboard-shortcuts)
+14. [Troubleshooting](#14-troubleshooting)
 
 ---
 
@@ -75,6 +76,7 @@ Press **Esc** or click **✕** to go back to your workbook. If the current windo
 | **Formulas** | Insert function, AutoSum, and a menu for each function category; show formulas; trace precedents (the cells a formula uses); recalculate. |
 | **Data** | Sort and filter; remove duplicates; fill; Advanced format; refresh live data. |
 | **Live Data** | **Finance** (stocks, price history, crypto, currencies), **Sports** (NFL data), **Weather & world** (weather, forecast, holidays, country data), and refreshing. |
+| **Automate** | Run a macro; the macro editor; new macros; step macros (no code, Beta); buttons, shortcuts and automatic macros; macro settings. |
 | **View** | Gridlines, headings, formula bar, status bar and the row-and-column highlight; zoom; freeze panes; light/dark theme and accent color; ribbon size; settings. |
 | **Help** | Command search, keyboard shortcuts, function browser, what's new, updates, settings, about. |
 
@@ -196,16 +198,27 @@ Yellow cells are the ones meant for you to change. Your favorite NFL team, fanta
 
 ## 10. Files, saving and Excel
 
-- **Save (Ctrl+S)** keeps the file's current format. **Save as (Ctrl+Shift+S)** can save as `.xlsx` or `.csv`.
+- **Save (Ctrl+S)** keeps the file's current format. **Save as (Ctrl+Shift+S)** can save as `.xlsx`, `.xlsm` (with macros) or `.csv`.
 - **CSV files** hold one sheet of values only. If your workbook has formatting, formulas or several sheets, Gridline asks whether to keep the CSV or save an `.xlsx` copy.
 - **AutoSave** (**Settings → Files & saving**) saves `.xlsx` files that already have a location every few minutes.
 - **Excel compatibility:**
   - Gridline keeps formulas, formatting, merged cells, conditional formatting, charts, freeze panes, filters, notes and links.
-  - Macros (`.xlsm`) aren't run; saving creates a regular `.xlsx`.
+  - Macro-enabled `.xlsm` files open with their VBA code, and the code is saved back. See [Macros and automation](#11-macros-and-automation).
   - Old `.xls` files need to be saved as `.xlsx` in another app first.
 - **Gridline-only functions** (live data and personal finance) are saved with their last results, so the values still show in Excel. Excel can't recalculate them.
 
-## 11. Settings
+## 11. Macros and automation
+
+A macro repeats work for you, like cleaning up a table, coloring rows or adding a dated entry to a log.
+The full guide is in **[Macros in Gridline](macros.md)**.
+
+- **Automate → Run macro** (or **Alt+F8**) runs a macro. **Esc** stops one that's running, and **Ctrl+Z** undoes a whole run.
+- **Automate → Macro editor** (or **Alt+F11**) opens the editor under the grid. Write VBA like in Excel and press **F5** to run it.
+- **Step macros (Beta):** build a macro from plain-English steps instead of code. Available with the Developer branch.
+- **Buttons, shortcuts and automatic macros:** run a macro from a button on the sheet, a key combination, or when the file opens or cells change.
+- **Safety:** macros in files you open stay off until you click **Enable macros**, and they can only work with the workbook.
+
+## 12. Settings
 
 Open **Settings** from the Gridline logo, from **Help → Settings**, or with **Ctrl+,**. Changes apply immediately.
 
@@ -219,6 +232,7 @@ Open **Settings** from the Gridline logo, from **Help → Settings**, or with **
 | Advanced format | First style, header color, currency symbol, date format, negative numbers, decimals, freeze and filter |
 | Files & saving | Startup (Home, blank workbook, or last file), where files open, recent file count, AutoSave, CSV separator, encoding, dates |
 | Live data | On/off, offline mode, price refresh, your currency, weather units, NFL refresh interval, downloaded data |
+| Macros | Whether to ask before running macros in files, automatic macros, trusted files |
 | Sports | Favorite NFL team, fantasy scoring, defaults for the NFL data panel |
 | Charts | Color palette, gridlines, pie percentages, default type, legend and size |
 | Status bar | Which totals are shown, click-to-copy, zoom slider |
@@ -229,7 +243,7 @@ Open **Settings** from the Gridline logo, from **Help → Settings**, or with **
 - Changed settings show a **↺** button that resets them.
 - **Export… / Import…** move your settings to another computer, and **Reset all** goes back to the defaults.
 
-## 12. Keyboard shortcuts
+## 13. Keyboard shortcuts
 
 Every command can also be found with **Ctrl+K**. **Ctrl+/** shows this list inside the app.
 
@@ -260,8 +274,10 @@ Every command can also be found with **Ctrl+K**. **Ctrl+/** shows this list insi
 | Zoom in / out / 100% | Ctrl+Alt+= / Ctrl+Alt+- / Ctrl+0 (or Ctrl+mouse wheel) |
 | Ribbon tabs only | Ctrl+F1 |
 | New sheet / next / previous sheet | Shift+F11 / Ctrl+PageDown / Ctrl+PageUp |
+| Macro editor / run a macro | Alt+F11 / Alt+F8 |
+| Run the macro in the editor / stop a macro | F5 / Esc |
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 **A cell says Loading… for a long time.**
 - The data is still downloading, or the connection is slow. The status bar shows how many downloads are running.
