@@ -357,6 +357,23 @@ export class Commands {
     a({ id: 'macro.triggers', title: 'Run a macro automatically…', category: 'Automate', icon: L.Zap, keywords: 'trigger event open change automatic', run: () => void app.macros.triggersDialog() });
     a({ id: 'macro.stop', title: 'Stop the running macro', category: 'Automate', icon: L.Square, keywords: 'cancel break', global: true, enabled: () => app.macros.running, run: () => app.macros.stop() });
     a({ id: 'macro.settings', title: 'Macro settings', category: 'Automate', icon: L.ShieldCheck, keywords: 'security trust enable disable macros', global: true, run: () => app.openSettings('macros') });
+    a({
+      id: 'ai.open',
+      title: 'Ask AI about this workbook',
+      category: 'AI',
+      keys: ['Ctrl+Shift+A'],
+      icon: L.Sparkles,
+      keywords: 'assistant claude chat explain analyze duplicates budget formula chart help copilot',
+      // Still in development: shown on the Developer branch only
+      get hidden() {
+        return !app.ai.available;
+      },
+      enabled: () => app.ai.available,
+      run: () => app.panel.open('ai'),
+    });
+    a({ id: 'ai.settings', title: 'AI assistant settings', category: 'AI', icon: L.Settings2, keywords: 'claude api key model local ollama lm studio', get hidden() {
+      return !app.ai.available;
+    }, global: true, run: () => app.openSettings('ai') });
     a({ id: 'nfl.panel', title: 'NFL data — insert player, team, schedule or standings stats', category: 'Insert', icon: L.Trophy, keywords: 'football stats nflverse player team qb fantasy', run: () => app.panel.open('nfl') });
     const nfl = (mode: string, title: string, icon: IconNode) => a({ id: `nfl.${mode}`, title: `NFL: ${title}`, category: 'Insert', icon, keywords: 'football nfl', run: () => app.panel.open('nfl', mode) });
     nfl('player', 'player stats', L.User);

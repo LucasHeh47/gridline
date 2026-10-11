@@ -37,6 +37,16 @@ const api: GridlineApi = {
   clearDataCache: () => ipcRenderer.invoke('net:clear-cache'),
   dataCacheSize: () => ipcRenderer.invoke('net:cache-size'),
   setZoomFactor: (f) => webFrame.setZoomFactor(Math.min(2, Math.max(0.5, Number(f) || 1))),
+  ai: {
+    chat: (id, req) => ipcRenderer.invoke('ai:chat', id, req),
+    cancel: (id) => ipcRenderer.send('ai:cancel', id),
+    onEvent: (cb) => {
+      ipcRenderer.on('ai:event', (_e, id, ev) => cb(id, ev));
+    },
+    setKey: (key) => ipcRenderer.invoke('ai:set-key', key),
+    hasKey: () => ipcRenderer.invoke('ai:has-key'),
+    localModels: (url) => ipcRenderer.invoke('ai:local-models', url),
+  },
   updates: {
     check: (opts) => ipcRenderer.invoke('updates:check', opts),
     state: () => ipcRenderer.invoke('updates:state'),

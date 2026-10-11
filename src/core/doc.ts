@@ -90,6 +90,24 @@ export class Doc {
     return new LiveEdit(this, label, (e) => this.emit(e), (tx) => this.syncEngine(tx));
   }
 
+  /**
+   * Applies changes, lets `inspect` look at the result (with formulas recalculated), then reverts
+   * everything. Nothing is recorded and no events fire, so the screen never shows the trial.
+   */
+  dryRun<T>(fn: (tx: Transaction) => void, inspect: (tx: Transaction) => T): T {
+    const tx = new Transaction('preview', this.wb);
+    const activeSheetId = this.wb.activeSheetId;
+    try {
+      fn(tx);
+      this.syncEngine(tx);
+      return inspect(tx);
+    } finally {
+      tx.replay(false);
+      this.wb.activeSheetId = activeSheetId;
+      this.syncEngine(tx);
+    }
+  }
+
   /** Runs `fn` as a single undoable action. */
   transact(label: string, fn: (tx: Transaction) => void): Transaction {
     const tx = new Transaction(label, this.wb);

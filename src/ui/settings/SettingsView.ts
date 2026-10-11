@@ -28,7 +28,7 @@ export class SettingsView {
     section?: string,
     private onClosed?: () => void,
   ) {
-    this.section = section && SECTIONS.some((s) => s.id === section) ? section : SECTIONS[0].id;
+    this.section = section && this.sections.some((s) => s.id === section) ? section : SECTIONS[0].id;
     this.search = h('input', { class: 'input st-search', type: 'search', placeholder: `Search ${app.settings.defs.length} settings`, spellcheck: false, 'aria-label': 'Search settings' }) as HTMLInputElement;
     this.search.addEventListener('input', () => this.render());
     this.nav = h('nav', { class: 'st-nav' });
@@ -61,7 +61,7 @@ export class SettingsView {
   }
 
   show(section?: string): void {
-    if (section && SECTIONS.some((s) => s.id === section)) {
+    if (section && this.sections.some((s) => s.id === section)) {
       this.section = section;
       this.search.value = '';
       this.render();
@@ -76,11 +76,21 @@ export class SettingsView {
     return q.split(/\s+/).every((w) => hay.includes(w));
   }
 
+  /** Sections shown now (some only appear on the Developer branch). */
+  private get sections() {
+    return SECTIONS.filter((x) => !x.visible || x.visible(this.app));
+  }
+
+  /** Redraws (after something a setting row shows changed outside the settings, like a saved key). */
+  rerender(): void {
+    this.render();
+  }
+
   private renderNav(): void {
     const s = this.app.settings;
     const q = this.search.value.trim().toLowerCase();
     this.nav.innerHTML = '';
-    for (const sec of SECTIONS) {
+    for (const sec of this.sections) {
       const defs = s.defs.filter((d) => d.section === sec.id && this.matches(d, q));
       const modified = defs.filter((d) => s.isModified(d.id)).length;
       const b = h(
@@ -104,7 +114,7 @@ export class SettingsView {
     const q = this.search.value.trim().toLowerCase();
     const scroll = this.content.scrollTop;
     this.content.innerHTML = '';
-    const sections = q ? SECTIONS : SECTIONS.filter((x) => x.id === this.section);
+    const sections = q ? this.sections : this.sections.filter((x) => x.id === this.section);
     let shown = 0;
     for (const sec of sections) {
       const defs = s.defs.filter((d) => d.section === sec.id && this.matches(d, q));

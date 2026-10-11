@@ -53,6 +53,58 @@ export interface GridlineApi {
   /** Scales the whole window (1 = 100%). */
   setZoomFactor(factor: number): void;
   updates: UpdatesApi;
+  ai: AiApi;
+}
+
+// ---------- AI assistant ----------
+
+/** 'claude': Anthropic's API with the user's own key. 'local': an OpenAI-compatible server on the PC (Ollama, LM Studio). */
+export type AiProvider = 'claude' | 'local';
+
+export interface AiToolDef {
+  name: string;
+  description: string;
+  /** JSON Schema of the tool's input. */
+  input_schema: Record<string, unknown>;
+}
+
+export type AiBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean };
+
+export interface AiMessage {
+  role: 'user' | 'assistant';
+  content: AiBlock[];
+}
+
+export interface AiRequest {
+  provider: AiProvider;
+  model: string;
+  system: string;
+  messages: AiMessage[];
+  tools: AiToolDef[];
+  maxTokens?: number;
+  /** Local provider: the server address, e.g. http://localhost:11434/v1 */
+  baseUrl?: string;
+}
+
+export type AiEvent =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'done'; stopReason: string; usage?: { input: number; output: number } }
+  | { type: 'error'; message: string };
+
+export interface AiApi {
+  /** Starts a request; its events arrive through onEvent with the same id. Resolves when it ends. */
+  chat(id: string, req: AiRequest): Promise<void>;
+  cancel(id: string): void;
+  onEvent(cb: (id: string, e: AiEvent) => void): void;
+  /** Stores the Claude API key encrypted on this computer (null removes it). The UI never reads it back. */
+  setKey(key: string | null): Promise<{ ok: boolean; error?: string }>;
+  hasKey(): Promise<boolean>;
+  /** Models offered by a local server. */
+  localModels(baseUrl: string): Promise<{ ok: boolean; models: string[]; error?: string }>;
 }
 
 export interface UpdateCheckOptions {

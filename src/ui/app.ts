@@ -24,6 +24,7 @@ import { STEP_EXAMPLES } from '../core/macros/steps';
 import { ChartLayer } from './charts/ChartLayer';
 import { ButtonLayer } from './macros/ButtonLayer';
 import { ValidationLayer } from './validationLayer';
+import { AiController } from './ai/AiController';
 import { MacroController } from './macros/MacroController';
 import { MacroEditor } from './macros/MacroEditor';
 import { Commands } from './commands';
@@ -131,6 +132,7 @@ export class App {
   buttons: ButtonLayer;
   validation: ValidationLayer;
   macros: MacroController;
+  ai: AiController;
   macroEditor: MacroEditor;
   commands: Commands;
   findBar: FindBar;
@@ -145,7 +147,7 @@ export class App {
   private csvChoice: 'xlsx' | 'csv' | null = null;
   readonly root: HTMLElement;
   private explainerEl: HTMLDivElement;
-  private settingsView: SettingsView | null = null;
+  settingsView: SettingsView | null = null;
   private homeView: HomeView | null = null;
   private timers: ReturnType<typeof setInterval>[] = [];
   private systemDark = window.matchMedia?.('(prefers-color-scheme: dark)');
@@ -183,6 +185,7 @@ export class App {
     this.doc = new Doc(this.blankWorkbook());
     this.cf = new CFEvaluator(this.doc);
     this.macros = new MacroController(this);
+    this.ai = new AiController(this);
     this.commands = new Commands(this);
     this.grid = new GridView(this);
     this.editor = new EditController(this);

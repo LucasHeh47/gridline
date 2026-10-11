@@ -45,6 +45,8 @@ export interface SectionDef {
   label: string;
   icon: IconNode;
   description: string;
+  /** Hidden unless this returns true (features still in development). */
+  visible?: (app: App) => boolean;
 }
 
 const KEY = 'gridline.settings';

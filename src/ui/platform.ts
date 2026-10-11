@@ -77,6 +77,14 @@ const webFallback: Omit<GridlineApi, 'isDesktop'> & { isDesktop: boolean } = {
     openPage: async () => undefined,
     onState: () => undefined,
   },
+  ai: {
+    chat: async () => undefined,
+    cancel: () => undefined,
+    onEvent: () => undefined,
+    setKey: async () => ({ ok: false, error: 'The AI assistant is available in the desktop app.' }),
+    hasKey: async () => false,
+    localModels: async () => ({ ok: false, models: [], error: 'The AI assistant is available in the desktop app.' }),
+  },
   newWindow: (_p, t) => window.open(location.pathname + (t ? `?template=${encodeURIComponent(t)}` : ''), '_blank'),
   openExternal: (url) => {
     if (/^(https?:|mailto:)/i.test(url)) window.open(url, '_blank', 'noopener');

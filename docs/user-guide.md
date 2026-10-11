@@ -11,9 +11,10 @@
 9. [Presets](#9-presets)
 10. [Files, saving and Excel](#10-files-saving-and-excel)
 11. [Macros and automation](#11-macros-and-automation)
-12. [Settings](#12-settings)
-13. [Keyboard shortcuts](#13-keyboard-shortcuts)
-14. [Troubleshooting](#14-troubleshooting)
+12. [AI assistant (Beta)](#12-ai-assistant-beta)
+13. [Settings](#13-settings)
+14. [Keyboard shortcuts](#14-keyboard-shortcuts)
+15. [Troubleshooting](#15-troubleshooting)
 
 ---
 
@@ -225,7 +226,16 @@ The full guide is in **[Macros in Gridline](macros.md)**.
 - **Buttons, shortcuts and automatic macros:** run a macro from a button on the sheet, a key combination, or when the file opens or cells change.
 - **Safety:** macros in files you open stay off until you click **Enable macros**, and they can only work with the workbook.
 
-## 12. Settings
+## 12. AI assistant (Beta)
+
+Ask questions about the workbook, or ask for changes in plain English: "find duplicate transactions, but don't delete anything" or "add a formula that categorizes these transactions". The full guide is in **[AI assistant](ai-assistant.md)**.
+
+- **Home → Ask AI** (or **Ctrl+Shift+A**) opens the assistant. It's available on the Developer branch in the desktop app.
+- It uses Claude with your own API key, or a model on your computer (Ollama or LM Studio).
+- It reads whatever it needs, across sheets, formulas and charts. Every read is listed in the chat.
+- Changes come as proposals that show every cell before → after, plus results elsewhere that would change. Nothing changes until you click **Apply**, and **Undo** on the card reverses it in one click.
+
+## 13. Settings
 
 Open **Settings** from the Gridline logo, from **Help → Settings**, or with **Ctrl+,**. Changes apply immediately.
 
@@ -239,6 +249,7 @@ Open **Settings** from the Gridline logo, from **Help → Settings**, or with **
 | Advanced format | First style, header color, currency symbol, date format, negative numbers, decimals, freeze and filter |
 | Files & saving | Startup (Home, blank workbook, or last file), where files open, recent file count, AutoSave, CSV separator, encoding, dates |
 | Live data | On/off, offline mode, price refresh, your currency, weather units, NFL refresh interval, downloaded data |
+| AI assistant | Claude or a local model, which Claude model, API key, local server and model, cells per read (Developer branch) |
 | Macros | Whether to ask before running macros in files, automatic macros, trusted files |
 | Sports | Favorite NFL team, fantasy scoring, defaults for the NFL data panel |
 | Charts | Color palette, gridlines, pie percentages, default type, legend and size |
@@ -250,7 +261,7 @@ Open **Settings** from the Gridline logo, from **Help → Settings**, or with **
 - Changed settings show a **↺** button that resets them.
 - **Export… / Import…** move your settings to another computer, and **Reset all** goes back to the defaults.
 
-## 13. Keyboard shortcuts
+## 14. Keyboard shortcuts
 
 Every command can also be found with **Ctrl+K**. **Ctrl+/** shows this list inside the app.
 
@@ -261,6 +272,7 @@ Every command can also be found with **Ctrl+K**. **Ctrl+/** shows this list insi
 | New workbook / new window | Ctrl+N / Ctrl+Shift+N |
 | Open / Save / Save as | Ctrl+O / Ctrl+S / Ctrl+Shift+S |
 | Settings | Ctrl+, |
+| Ask AI (Developer branch) | Ctrl+Shift+A |
 | Undo / Redo | Ctrl+Z / Ctrl+Y |
 | Cut / Copy / Paste / Paste values | Ctrl+X / Ctrl+C / Ctrl+V / Ctrl+Shift+V |
 | Edit the cell | F2 (or double-click) |
@@ -284,7 +296,7 @@ Every command can also be found with **Ctrl+K**. **Ctrl+/** shows this list insi
 | Macro editor / run a macro | Alt+F11 / Alt+F8 |
 | Run the macro in the editor / stop a macro | F5 / Esc |
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 **A cell says Loading… for a long time.**
 - The data is still downloading, or the connection is slow. The status bar shows how many downloads are running.

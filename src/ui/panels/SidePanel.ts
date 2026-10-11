@@ -10,8 +10,9 @@ import { FunctionsPanel } from './FunctionsPanel';
 import { NFLPanel } from './NFLPanel';
 import { ValidationPanel } from './ValidationPanel';
 import { SortPanel } from './SortPanel';
+import { AiPanel } from '../ai/AiPanel';
 
-export type PanelKind = 'format' | 'cf' | 'chart' | 'sort' | 'functions' | 'nfl' | 'validation';
+export type PanelKind = 'format' | 'cf' | 'chart' | 'sort' | 'functions' | 'nfl' | 'validation' | 'ai';
 
 export interface PanelContent {
   title: string;
@@ -44,6 +45,7 @@ export class SidePanel {
 
   open(kind: PanelKind, sub?: string): void {
     if (this.kind === kind && this.content) {
+      if ('focusInput' in this.content) (this.content as unknown as { focusInput(): void }).focusInput();
       if (sub && 'setTab' in this.content) (this.content as unknown as { setTab(t: string): void }).setTab(sub);
       this.content.refresh?.();
       return;
@@ -73,7 +75,11 @@ export class SidePanel {
       case 'nfl':
         this.content = new NFLPanel(app, sub);
         break;
+      case 'ai':
+        this.content = new AiPanel(app);
+        break;
     }
+    this.el.classList.toggle('wide', kind === 'ai');
     this.titleEl.textContent = this.content.title;
     this.body.innerHTML = '';
     this.body.append(this.content.el);

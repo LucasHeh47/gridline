@@ -6,7 +6,9 @@ import { TEAMS } from '../../core/data/nflTeams';
 import { setChartPalette } from '../../core/charts';
 import { platform } from '../platform';
 import type { App } from '../app';
-import { uiOptions } from '../widgets';
+import { dialog, toast, uiOptions } from '../widgets';
+import { CLAUDE_MODELS } from '../ai/AiController';
+import { askForKey, removeKey } from '../ai/AiPanel';
 import type { SectionDef, SettingDef, SettingOption } from './store';
 
 export const SECTIONS: SectionDef[] = [
@@ -18,6 +20,7 @@ export const SECTIONS: SectionDef[] = [
   { id: 'smart', label: 'Advanced format', icon: L.Sparkles, description: 'How Advanced format styles your data.' },
   { id: 'files', label: 'Files & saving', icon: L.FileSpreadsheet, description: 'Opening, autosave and CSV options.' },
   { id: 'live', label: 'Live data', icon: L.CloudDownload, description: 'NFL stats, stock prices and exchange rates.' },
+  { id: 'ai', label: 'AI assistant', icon: L.Sparkles, description: 'An assistant that reads your workbook and proposes changes you review before anything is modified. In development (Developer branch).', visible: (app) => app.ai.available },
   { id: 'macros', label: 'Macros', icon: L.SquareCode, description: 'Security for workbooks with macros, and automatic macros.' },
   { id: 'nfl', label: 'Sports', icon: L.Trophy, description: 'Defaults for NFL data and the sports presets.' },
   { id: 'charts', label: 'Charts', icon: L.ChartColumn, description: 'Colors and defaults for new charts.' },
@@ -185,6 +188,28 @@ export const SETTINGS: SettingDef[] = [
     app.savePrefs();
   } } },
   { id: 'keyboard.list', section: 'keyboard', group: 'Shortcuts', label: 'All keyboard shortcuts', type: 'action', action: { label: 'Show', run: (app) => app.commands.run('help.shortcuts') } },
+
+  // ---------- AI assistant ----------
+  { id: 'ai.provider', section: 'ai', group: 'Model', label: 'Use', description: "Claude runs on Anthropic's servers with your own API key. A local model runs on this computer, so the workbook never leaves it (needs Ollama or LM Studio, and a model that supports tools).", type: 'select', default: 'claude', options: opts(['claude', 'Claude (your API key)'], ['local', 'A model on this computer']), keywords: 'ai provider anthropic ollama lm studio offline', apply: (_v: string, app: App) => app.ai?.onChange?.() },
+  { id: 'ai.model', section: 'ai', group: 'Model', label: 'Claude model', description: 'Sonnet is fast and capable (recommended). Opus is the most capable, but slower and costs more. Haiku is the quickest and cheapest.', type: 'select', default: 'claude-sonnet-5-5', options: CLAUDE_MODELS.map(([value, label]) => ({ value, label })), keywords: 'sonnet opus haiku', apply: (_v: string, app: App) => app.ai?.onChange?.() },
+  { id: 'ai.key', section: 'ai', group: 'Claude API key', label: 'Claude API key', description: "Encrypted with your computer's keychain and only sent to Anthropic. Usage is billed to your Anthropic account.", type: 'info', desktopOnly: true, info: async () => ((await platform.ai.hasKey()) ? 'Saved on this computer' : 'Not set') },
+  { id: 'ai.setKey', section: 'ai', group: 'Claude API key', label: 'Add or replace the key', type: 'action', desktopOnly: true, keywords: 'api key anthropic console', action: { label: 'Set key…', run: async (app) => {
+    if (await askForKey(app)) app.settingsView?.rerender();
+  } } },
+  { id: 'ai.removeKey', section: 'ai', group: 'Claude API key', label: 'Remove the key from this computer', type: 'action', desktopOnly: true, action: { label: 'Remove', run: async (app) => {
+    await removeKey(app);
+    app.settingsView?.rerender();
+  } } },
+  { id: 'ai.localUrl', section: 'ai', group: 'Local model', label: 'Server address', description: 'Ollama: http://localhost:11434/v1 — LM Studio: http://localhost:1234/v1', type: 'text', default: 'http://localhost:11434/v1', keywords: 'ollama lm studio url openai compatible' },
+  { id: 'ai.localModel', section: 'ai', group: 'Local model', label: 'Model', description: 'The model name on that server, such as qwen3 or llama3.1. Use "Find models" to pick one.', type: 'text', default: '', keywords: 'ollama model name', apply: (_v: string, app: App) => app.ai?.onChange?.() },
+  { id: 'ai.findModels', section: 'ai', group: 'Local model', label: 'Models on the server', type: 'action', desktopOnly: true, action: { label: 'Find models', run: async (app) => {
+    const r = await platform.ai.localModels(app.settings.str('ai.localUrl'));
+    if (!r.ok) return toast(r.error ?? "Couldn't reach the server.", { kind: 'error' });
+    if (!r.models.length) return toast('The server has no models yet. Download one first (for example: ollama pull qwen3).');
+    const pick = await dialog<string | null>('Choose a model', 'Models available on your local AI server:', [...r.models.slice(0, 12).map((m) => ({ label: m, value: m as string | null })), { label: 'Cancel', value: null }]);
+    if (pick) app.settings.set('ai.localModel', pick);
+  } } },
+  { id: 'ai.maxCells', section: 'ai', group: 'Reading', label: 'Most cells per read', description: 'How many cells the assistant can read at once. More gives it more to work with but uses more tokens; for totals it calculates with formulas instead of reading everything.', type: 'number', default: 2000, min: 100, max: 20000, step: 100, unit: 'cells', keywords: 'context tokens limit privacy' },
 
   // ---------- Macros ----------
   { id: 'macros.security', section: 'macros', group: 'Security', label: 'When a file contains macros', description: 'Macros are small programs inside a workbook. They can change your workbook, so only run macros from people you trust. Macros in Gridline can\'t open other files or programs.', type: 'select', default: 'ask', options: opts(['ask', 'Ask me first (recommended)'], ['enable', 'Always run them'], ['disable', 'Never run them']), keywords: 'vba trust enable disable security' },

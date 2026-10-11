@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { setupAi } from './ai';
 import { setupUpdates } from './updater';
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
@@ -358,6 +359,7 @@ ipcMain.handle('net:cache-size', async () => {
 });
 
 setupUpdates();
+setupAi();
 
 // ---------- lifecycle ----------
 

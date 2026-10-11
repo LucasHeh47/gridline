@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.5
+
+- **AI assistant (Beta, Developer branch).** Ask about your workbook or describe a job in plain English, for example: "Find duplicate transactions, but don't delete anything" or "Add a formula that categorizes these transactions". Open it from **Home → Ask AI** or with **Ctrl+Shift+A**.
+  - **Works with the whole workbook**, not just what's on screen. It reads the sheets, formulas, charts, highlight rules and dropdowns it needs, and traces how cells depend on each other across sheets. Every read is listed in the chat.
+  - **Nothing changes without your approval.** Changes come as proposals that show every cell that changes (before → after, with the formula), plus formula results elsewhere that would change. Click **Apply** or **Reject**, or tell it what to do instead.
+  - **One-click undo.** Each applied change is a single step with an **Undo** button. The button still works after you've made other edits, and keeps any cells you changed yourself since.
+  - Use **Claude** with your own API key (stored encrypted on your computer), or a **model on your computer** with Ollama or LM Studio, so the workbook never leaves it. Choose in **Settings → AI assistant**.
+  - Cell addresses in answers are links that jump to those cells.
+
 ## 1.0.4
 
 - **Calculations match Excel exactly.** Tested against an Excel workbook with 9,719 formulas: every result is identical to Excel's, down to the last digit, and all 19,638 cells display the same text. Gridline now:

@@ -622,6 +622,7 @@ export class Ribbon {
           [this.menu(L.Search, 'Find', () => [this.item('edit.find'), this.item('edit.replace'), this.item('edit.goto'), { separator: true }, this.item('edit.selectColumn'), this.item('edit.selectRow')], { tip: 'Find, replace and go to' })],
         ),
       ]),
+      ...(app.ai.available ? [this.group('ai', 'AI (Beta)', L.Sparkles, () => [this.cmd('ai.open', { big: true, label: 'Ask AI' })])] : []),
     ];
   }
 

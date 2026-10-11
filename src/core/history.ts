@@ -102,6 +102,50 @@ export class Transaction {
     if (other.structural) this.structural = true;
   }
 
+  /**
+   * Writes the opposite of this transaction into `into` (to undo it later, after other edits). Parts
+   * that were changed again since are left alone and counted in `skipped`.
+   */
+  revertInto(into: Transaction): { reverted: number; skipped: number } {
+    let reverted = 0;
+    let skipped = 0;
+    for (let i = this.changes.length - 1; i >= 0; i--) {
+      const ch = this.changes[i];
+      switch (ch.k) {
+        case 'cell':
+          if (ch.sheet.cells.get(ch.key) !== ch.after) {
+            skipped++;
+            continue;
+          }
+          into.setCell(ch.sheet, keyRow(ch.key), keyCol(ch.key), ch.before);
+          break;
+        case 'map':
+          if (ch.map.get(ch.key) !== ch.after) {
+            skipped++;
+            continue;
+          }
+          into.setMap(ch.map, ch.key, ch.before, ch.sheet);
+          break;
+        case 'set':
+          if (ch.set.has(ch.key) !== ch.after) {
+            skipped++;
+            continue;
+          }
+          into.setMember(ch.set, ch.key, ch.before, ch.sheet);
+          break;
+        case 'prop':
+          if ((ch.target as Record<string, unknown>)[ch.prop] !== ch.after) {
+            skipped++;
+            continue;
+          }
+          into.setProp(ch.target as Record<string, unknown>, ch.prop, ch.before, ch.structural);
+          break;
+      }
+      reverted++;
+    }
+    return { reverted, skipped };
+  }
+
   /** Cells whose content changed, for incremental recalculation. */
   touchedCells(): TouchedCell[] {
     const out: TouchedCell[] = [];
