@@ -13,11 +13,16 @@ if (version.includes('-')) {
     // no regular release yet
   }
   const log = execSync(`git log ${since ? `${since}..HEAD` : '-15'} --no-merges --format="- %s"`, { encoding: 'utf8' }).trim();
+  // The upcoming version's changelog section, when it has been written already
+  const upcoming = readFileSync('CHANGELOG.md', 'utf8')
+    .split(/^## /m)
+    .find((s) => s.startsWith(`${version.split('-')[0]}\n`) || s.startsWith(`${version.split('-')[0]}\r\n`));
   notes = [
     `Development build ${version} from the \`develop\` branch.`,
     '',
     'It has the newest changes and may have bugs. To go back to regular releases, turn off **Settings → Updates → Developer branch**.',
     '',
+    upcoming ? `What's in it:\n\n${upcoming.split(/\r?\n/).slice(1).join('\n').trim()}\n` : '',
     log ? `Changes since ${since || 'the last release'}:\n\n${log}` : '',
   ].join('\n');
 } else {
