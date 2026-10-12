@@ -1,7 +1,7 @@
 {
   "name": "gridline",
   "productName": "Gridline",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "A fast, simple, dark-mode spreadsheet app that opens and saves .xlsx and .csv files.",
   "main": "dist-electron/main.js",
   "private": true,

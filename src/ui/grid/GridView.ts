@@ -1183,10 +1183,8 @@ export class GridView {
       const x = this.colX(c);
       const isSel = colSelected(c);
       if (isSel) {
-        ctx.fillStyle = fullCols.has(c) ? t.selBorder + '55' : t.headerSelBg;
-        ctx.fillRect(x, 0, w, hy);
-        ctx.fillStyle = t.selBorder;
-        ctx.fillRect(x, hy - 2, w, 2);
+        ctx.fillStyle = fullCols.has(c) ? t.selBorder + '40' : t.headerSelBg;
+        pill(ctx, x + 2, 3, w - 4, hy - 6);
       }
       ctx.fillStyle = isSel ? t.headerSelText : t.headerText;
       ctx.textAlign = 'center';
@@ -1219,10 +1217,8 @@ export class GridView {
       const y = this.rowY(r);
       const isSel = rowSelected(r);
       if (isSel) {
-        ctx.fillStyle = fullRows.has(r) ? t.selBorder + '55' : t.headerSelBg;
-        ctx.fillRect(0, y, hx, h);
-        ctx.fillStyle = t.selBorder;
-        ctx.fillRect(hx - 2, y, 2, h);
+        ctx.fillStyle = fullRows.has(r) ? t.selBorder + '40' : t.headerSelBg;
+        pill(ctx, 3, y + 1, hx - 6, h - 2);
       }
       ctx.fillStyle = s.filterHidden.size && this.isFiltered(r) ? t.accent : isSel ? t.headerSelText : t.headerText;
       ctx.textAlign = 'center';
@@ -1251,14 +1247,12 @@ export class GridView {
     ctx.fillRect(hx - 1, 0, 1, H);
     ctx.fillStyle = t.headerBg;
     ctx.fillRect(0, 0, hx - 1, hy - 1);
-    ctx.fillStyle = t.headerText;
+    ctx.strokeStyle = t.headerText;
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 1.25;
     ctx.beginPath();
-    ctx.moveTo(hx - 5, hy - 13);
-    ctx.lineTo(hx - 5, hy - 5);
-    ctx.lineTo(hx - 13, hy - 5);
-    ctx.closePath();
-    ctx.globalAlpha = 0.5;
-    ctx.fill();
+    ctx.roundRect(Math.round(hx / 2 - 5) + 0.5, Math.round(hy / 2 - 5) + 0.5, 10, 10, 2.5);
+    ctx.stroke();
     ctx.globalAlpha = 1;
     ctx.textAlign = 'left';
   }
@@ -1621,4 +1615,12 @@ export class GridView {
     }
     return max;
   }
+}
+
+/** A rounded highlight (selected headings). */
+function pill(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number): void {
+  if (w <= 0 || h <= 0) return;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, Math.min(6, h / 2, w / 2));
+  ctx.fill();
 }

@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.5
+## 1.0.6
 
 - **AI assistant (Beta, Developer branch).** Ask about your workbook or describe a job in plain English, for example: "Find duplicate transactions, but don't delete anything" or "Add a formula that categorizes these transactions". Open it from **Home → Ask AI** or with **Ctrl+Shift+A**.
   - **Works with the whole workbook**, not just what's on screen. It reads the sheets, formulas, charts, highlight rules and dropdowns it needs, and traces how cells depend on each other across sheets. Every read is listed in the chat.
@@ -14,6 +14,19 @@
   - **Local models get the full instructions.** Ollama's default context (often 4,096 tokens) silently cut off over half of what the assistant needs to know, so models didn't realize they were in a spreadsheet. Gridline now sets it to 16,384 tokens (**Settings → AI assistant → Context size**) and warns when a chat outgrows it. A tip suggests a larger model when you pick a very small one.
   - **Works with more local models.** Some models, like Qwen3-Coder in Ollama, write their actions as text instead of sending them properly. Gridline now recognizes these, so the changes show up as proposals instead of code in the chat. Reasoning blocks (`<think>…</think>`) are hidden.
   - Proposal previews show "Loading…" while live data downloads and fill in when it arrives. A formula that fills a whole table shows how much of the sheet it covers.
+
+## 1.0.5
+
+- **Menus close when you click elsewhere.** Right-click menus, ribbon dropdowns, color and font pickers and filter menus now close when you click the sheet, the title bar or anywhere else, when you scroll, when the window loses focus, and when it's resized. Clicking a dropdown's button again closes it.
+- **Better keyboard use in menus.** → opens a submenu and ← goes back; Home and End jump to the first and last item; typing a letter jumps to the next item starting with it; disabled items are skipped. Escape closes one level at a time, and focus goes back to where you were.
+- **A fresh look.** Gridline now looks less like a copy of Excel:
+  - ribbon tools sit in rounded groups instead of labeled sections (the group names can be turned back on in **Settings → Ribbon**);
+  - pill-shaped tabs, and a quieter File button;
+  - the sheet, side panels and macro editor are rounded cards;
+  - selected row and column headings get a soft highlight instead of a bar;
+  - smoother hover effects, and menus fade in.
+- The Advanced format card closes (keeping the formatting) when you click elsewhere.
+- Fixed a light outline around right-click menus.
 
 ## 1.0.4
 

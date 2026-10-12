@@ -48,7 +48,7 @@ import { SettingsView } from './settings/SettingsView';
 import { HomeView, type HomeSection } from './home';
 import { TitleBar } from './titleBar';
 import { Updates } from './updates';
-import { dialog, hideTooltip, toast, type MenuItem } from './widgets';
+import { dialog, hideTooltip, setFocusFallback, toast, type MenuItem } from './widgets';
 
 export interface Prefs {
   recentCommands: string[];
@@ -227,6 +227,7 @@ export class App {
       if (!isDesktop && this.doc.dirty) e.preventDefault();
     });
     this.refreshAll();
+    setFocusFallback(() => this.focusGrid());
     this.focusGrid();
     this.restartTimers();
     void this.openStartupFile();

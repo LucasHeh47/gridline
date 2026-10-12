@@ -122,9 +122,16 @@ export function advancedFormat(app: App): void {
       e.stopPropagation();
     }
   };
+  // Clicking anywhere else keeps the formatting and puts the card away (like Keep)
+  const onPress = (e: PointerEvent) => {
+    const t = e.target;
+    if (card && t instanceof Element && !card.contains(t) && !t.closest('.popover, .modal-backdrop')) closeCard();
+  };
   document.addEventListener('keydown', onKey, true);
+  document.addEventListener('pointerdown', onPress, true);
   cleanup = () => {
     off();
     document.removeEventListener('keydown', onKey, true);
+    document.removeEventListener('pointerdown', onPress, true);
   };
 }

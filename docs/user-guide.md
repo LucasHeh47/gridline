@@ -242,7 +242,7 @@ Open **Settings** from the Gridline logo, from **Help → Settings**, or with **
 | Section | Examples |
 | --- | --- |
 | Appearance | Dark / light / match Windows; accent color; contrast; density; interface font and size; which bars are shown; tooltips |
-| Ribbon | Size, labels, icon size, which tabs are shown, starting tab |
+| Ribbon | Size, labels, group names, icon size, which tabs are shown, starting tab |
 | Grid & sheets | Gridline color, headings, row/column highlight, negative numbers in red, hide zeros, fill handle, scroll speed, defaults for new workbooks |
 | Editing | Where Enter moves, date order (month/day or day/month), leading zeros, automatic decimal point, autocomplete, undo steps |
 | Formulas & errors | Error explanations, quick fixes, formula bar font and size, updating NOW()/TODAY() on a timer |
