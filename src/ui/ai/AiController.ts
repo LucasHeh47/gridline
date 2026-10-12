@@ -1,12 +1,12 @@
-// The AI assistant in the app: one conversation per window, kept while the panel is closed. Reads
-// are logged in the chat; proposals wait for Apply or Reject; applied changes keep an Undo button.
+// The AI assistant in the app: one conversation per workbook tab, kept while the panel is closed.
+// Reads are logged in the chat; changes go in with an Undo button (or wait for Apply / Reject).
 import { AgentError, Conversation, type AgentOptions, type AiTransport, type Proposal, type ProposalOutcome } from '../../core/ai/agent';
 import { applyChanges, previewChanges, previewLoading, revertChanges } from '../../core/ai/changes';
 import { formatRange, parseRange, type Range } from '../../core/address';
 import { external } from '../../core/data/external';
 import { displayText } from '../../core/ops/data';
 import { workbookOverview } from '../../core/ai/workbook';
-import type { DocEvent } from '../../core/doc';
+import type { Doc, DocEvent } from '../../core/doc';
 import type { Transaction } from '../../core/history';
 import type { Workbook } from '../../core/workbook';
 import type { AiEvent } from '../../shared/api';
@@ -69,71 +69,125 @@ export const platformTransport: AiTransport = {
   },
 };
 
+/** One chat about one workbook. Each workbook tab has its own; it keeps going in the background. */
+interface ChatSession {
+  doc: Doc;
+  items: ChatItem[];
+  conv: Conversation;
+  running: boolean;
+  ctl: AbortController | null;
+  current: { kind: 'assistant'; text: string } | null;
+  /** The workbook the chat is about (opening another file into the same tab starts over). */
+  wb: Workbook;
+  /** Bumped by New chat, so a request still winding down can't touch the new chat. */
+  gen: number;
+}
+
 export class AiController {
-  items: ChatItem[] = [];
-  running = false;
   hasKey: boolean | null = null;
   /** Repaints the panel; `item` alone changed when given. */
   onChange: ((item?: ChatItem) => void) | null = null;
-  private conv: Conversation;
-  private ctl: AbortController | null = null;
-  private wb: Workbook;
-  private current: { kind: 'assistant'; text: string } | null = null;
-  /** Bumped by New chat, so a request still winding down can't touch the new chat. */
-  private gen = 0;
+  private sessions = new Map<Doc, ChatSession>();
 
   constructor(
     private app: App,
     private transport: AiTransport = platformTransport,
   ) {
-    this.wb = app.doc.wb;
-    this.conv = this.makeConversation();
-    app.doc.on((e) => this.docChanged(e));
     // Previews run on a trial copy, so their downloads don't count as sheet changes: listen directly
     external.onChange(() => this.dataArrived());
   }
 
-  /** A conversation whose callbacks only reach the chat while it's the current one. */
-  private makeConversation(): Conversation {
-    const gen = this.gen;
-    const live = () => gen === this.gen;
-    return new Conversation(this.app.doc, this.transport, {
+  /** The chat of the workbook tab being shown. */
+  private get chat(): ChatSession {
+    return this.session(this.app.doc);
+  }
+
+  get items(): ChatItem[] {
+    return this.chat.items;
+  }
+
+  get running(): boolean {
+    return this.chat.running;
+  }
+
+  get usage(): { input: number; output: number } {
+    return this.chat.conv.usage;
+  }
+
+  private session(doc: Doc): ChatSession {
+    // Chats of closed tabs go away
+    for (const [d, s] of this.sessions) {
+      if (!this.app.books.some((b) => b.doc === d)) {
+        s.ctl?.abort();
+        this.sessions.delete(d);
+      }
+    }
+    let s = this.sessions.get(doc);
+    if (!s) {
+      const fresh: ChatSession = { doc, items: [], running: false, ctl: null, current: null, wb: doc.wb, gen: 0, conv: undefined as unknown as Conversation };
+      fresh.conv = this.makeConversation(fresh);
+      this.sessions.set(doc, fresh);
+      doc.on((e) => this.docChanged(fresh, e));
+      s = fresh;
+    }
+    return s;
+  }
+
+  private shown(s: ChatSession): boolean {
+    return s.doc === this.app.doc;
+  }
+
+  /** Repaints when the chat is the one on screen. */
+  private notify(s: ChatSession, item?: ChatItem): void {
+    if (this.shown(s)) this.onChange?.(item);
+  }
+
+  private push(s: ChatSession, item: ChatItem): void {
+    s.items.push(item);
+    this.notify(s);
+  }
+
+  /** A conversation whose callbacks only reach its chat while it's that chat's current one. */
+  private makeConversation(s: ChatSession): Conversation {
+    const gen = s.gen;
+    const live = () => gen === s.gen && this.sessions.get(s.doc) === s;
+    return new Conversation(s.doc, this.transport, {
       onStep: () => {
-        if (live()) this.current = null;
+        if (live()) s.current = null;
       },
       onText: (t) => {
         if (!live()) return;
-        if (!this.current) {
-          this.current = { kind: 'assistant', text: '' };
-          this.push(this.current);
+        if (!s.current) {
+          s.current = { kind: 'assistant', text: '' };
+          this.push(s, s.current);
         }
-        this.current.text += t;
-        this.onChange?.(this.current);
+        s.current.text += t;
+        this.notify(s, s.current);
       },
       onRead: (text, error) => {
         if (!live()) return;
-        this.current = null;
-        const last = this.items[this.items.length - 1];
+        s.current = null;
+        const last = s.items[s.items.length - 1];
         if (last?.kind === 'reads') {
           last.lines.push({ text, error });
-          this.onChange?.(last);
-        } else this.push({ kind: 'reads', lines: [{ text, error }] });
+          this.notify(s, last);
+        } else this.push(s, { kind: 'reads', lines: [{ text, error }] });
       },
       propose: (p, signal) =>
         new Promise<ProposalOutcome>((resolve) => {
           if (!live()) return resolve({ status: 'stopped' });
-          this.current = null;
-          const item: ProposalItem = { kind: 'proposal', p, state: 'pending', wb: this.app.doc.wb, resolve };
+          s.current = null;
+          const item: ProposalItem = { kind: 'proposal', p, state: 'pending', wb: s.doc.wb, resolve };
           signal.addEventListener('abort', () => this.settle(item, 'stopped', { status: 'stopped' }));
-          this.push(item);
+          this.push(s, item);
           if (this.autoApply) this.apply(item, true);
         }),
       onNotice: (text) => {
-        if (live()) this.push({ kind: 'notice', text, action: 'settings' });
+        if (live()) this.push(s, { kind: 'notice', text, action: 'settings' });
       },
       overview: () => {
         const app = this.app;
-        return workbookOverview(app.doc, { sheet: app.sheet, ranges: app.sel.ranges, active: app.sel.active });
+        return workbookOverview(s.doc, this.shown(s) ? { sheet: app.sheet, ranges: app.sel.ranges, active: app.sel.active } : undefined);
       },
     });
   }
@@ -169,11 +223,6 @@ export class AiController {
     this.onChange?.();
   }
 
-  private push(item: ChatItem): void {
-    this.items.push(item);
-    this.onChange?.();
-  }
-
   private options(): AgentOptions {
     const s = this.app.settings;
     const autoApply = this.autoApply;
@@ -184,35 +233,39 @@ export class AiController {
 
   async send(text: string): Promise<void> {
     text = text.trim();
-    if (!text || this.running) return;
+    let s = this.chat;
+    if (!text || s.running) return;
     if (containsSecret(text)) {
-      this.push({ kind: 'error', text: "That message contains an API key, so it wasn't sent. Keys never go in the chat: add yours in Settings → AI assistant, where it's stored encrypted.", action: 'key' });
+      this.push(s, { kind: 'error', text: "That message contains an API key, so it wasn't sent. Keys never go in the chat: add yours in Settings → AI assistant, where it's stored encrypted.", action: 'key' });
       return;
     }
-    if (this.app.doc.wb !== this.wb) this.newChat();
-    this.smallModelTip();
-    const gen = this.gen;
-    this.running = true;
-    this.current = null;
-    this.push({ kind: 'user', text });
+    if (s.doc.wb !== s.wb) {
+      this.newChat();
+      s = this.chat;
+    }
+    this.smallModelTip(s);
+    const gen = s.gen;
+    s.running = true;
+    s.current = null;
+    this.push(s, { kind: 'user', text });
     const ctl = new AbortController();
-    this.ctl = ctl;
+    s.ctl = ctl;
     // The model only learns about Undo clicks from us
-    const undone = this.items.filter((i): i is ProposalItem => i.kind === 'proposal' && !!i.undoneUnreported && i.state === 'undone');
+    const undone = s.items.filter((i): i is ProposalItem => i.kind === 'proposal' && !!i.undoneUnreported && i.state === 'undone');
     for (const i of undone) i.undoneUnreported = false;
     const prefix = undone.length ? `(Since your last reply I undid: ${undone.map((i) => `"${i.p.title}"`).join(', ')}. Those changes are no longer in the workbook.)\n\n` : '';
     try {
-      await this.conv.send(prefix + text, this.options(), ctl.signal);
+      await s.conv.send(prefix + text, this.options(), ctl.signal);
     } catch (e) {
       const msg = e instanceof AgentError ? e.message : `Something went wrong: ${(e as Error).message || String(e)}`;
-      if (gen === this.gen) this.push({ kind: 'error', text: msg, action: /API key/i.test(msg.split(HIDDEN).join('')) ? 'key' : /Settings/.test(msg) ? 'settings' : undefined });
+      if (gen === s.gen) this.push(s, { kind: 'error', text: msg, action: /API key/i.test(msg.split(HIDDEN).join('')) ? 'key' : /Settings/.test(msg) ? 'settings' : undefined });
     } finally {
       // Unless New chat was clicked meanwhile (that chat has its own state)
-      if (gen === this.gen) {
-        this.ctl = null;
-        this.running = false;
-        this.current = null;
-        this.onChange?.();
+      if (gen === s.gen) {
+        s.ctl = null;
+        s.running = false;
+        s.current = null;
+        this.notify(s);
       }
     }
   }
@@ -220,34 +273,38 @@ export class AiController {
   private tipped = new Set<string>();
 
   /** Models under about 7B parameters rarely manage spreadsheet tools; say so once per model. */
-  private smallModelTip(): void {
+  private smallModelTip(s: ChatSession): void {
     if (this.provider !== 'local') return;
     const model = this.app.settings.str('ai.localModel');
     const m = /(?:^|[:\-_ ])(\d+(?:\.\d+)?)b\b/i.exec(model);
     if (!m || Number(m[1]) >= 7 || this.tipped.has(model)) return;
     this.tipped.add(model);
-    this.push({ kind: 'notice', text: `${model} is a small model. Models under about 7B often can't work with a spreadsheet reliably — they may answer with code or invented numbers instead of changing the sheet. For better results, try a larger model such as qwen3:8b or qwen3-coder:30b.`, action: 'settings' });
+    this.push(s, { kind: 'notice', text: `${model} is a small model. Models under about 7B often can't work with a spreadsheet reliably — they may answer with code or invented numbers instead of changing the sheet. For better results, try a larger model such as qwen3:8b or qwen3-coder:30b.`, action: 'settings' });
   }
 
   stop(): void {
-    this.ctl?.abort();
+    this.chat.ctl?.abort();
   }
 
+  /** Starts over in the shown tab's chat. */
   newChat(): void {
-    this.stop();
-    for (const it of this.items) if (it.kind === 'proposal' && it.state === 'pending') this.settle(it, 'stopped', { status: 'stopped' });
-    this.gen++;
-    this.ctl = null;
-    this.running = false;
-    this.items = [];
-    this.conv = this.makeConversation();
-    this.wb = this.app.doc.wb;
-    this.current = null;
-    this.onChange?.();
+    const s = this.chat;
+    s.ctl?.abort();
+    for (const it of s.items) if (it.kind === 'proposal' && it.state === 'pending') this.settle(it, 'stopped', { status: 'stopped' });
+    s.gen++;
+    s.ctl = null;
+    s.running = false;
+    s.items = [];
+    s.current = null;
+    s.wb = s.doc.wb;
+    s.conv = this.makeConversation(s);
+    this.notify(s);
   }
 
-  get usage(): { input: number; output: number } {
-    return this.conv.usage;
+  /** The chat a proposal card belongs to. */
+  private owner(item: ChatItem): ChatSession | undefined {
+    for (const s of this.sessions.values()) if (s.items.includes(item)) return s;
+    return undefined;
   }
 
   private settle(item: ProposalItem, state: ProposalItem['state'], outcome: ProposalOutcome, note?: string): void {
@@ -257,22 +314,25 @@ export class AiController {
     const r = item.resolve;
     item.resolve = undefined;
     r?.(outcome);
-    this.onChange?.(item);
+    const s = this.owner(item);
+    if (s) this.notify(s, item);
   }
 
+  /** Puts a proposal into its own workbook (which may be a tab in the background). */
   apply(item: ProposalItem, auto = false): void {
     if (item.state !== 'pending') return;
-    const doc = this.app.doc;
-    if (doc.wb !== item.wb) {
-      this.settle(item, 'failed', { status: 'failed', error: 'A different workbook is open now.' }, 'A different workbook is open now.');
+    const s = this.owner(item);
+    const doc = s?.doc;
+    if (!doc || doc.wb !== item.wb) {
+      this.settle(item, 'failed', { status: 'failed', error: 'That workbook has been closed or replaced.' }, 'That workbook has been closed or replaced.');
       return;
     }
-    if (this.app.isEditing && !this.app.commitEdit()) return;
+    if (this.shown(s) && this.app.isEditing && !this.app.commitEdit()) return;
     try {
       const tx = applyChanges(doc, item.p.title, item.p.changes);
       item.tx = tx;
       this.settle(item, 'applied', { status: 'applied', label: tx.label, auto });
-      this.show(item);
+      if (this.shown(s)) this.show(item);
     } catch (e) {
       const msg = (e as Error).message || String(e);
       this.settle(item, 'failed', { status: 'failed', error: msg }, msg);
@@ -317,48 +377,51 @@ export class AiController {
 
   undo(item: ProposalItem): void {
     if (item.state !== 'applied' || !item.tx) return;
-    if (this.app.doc.wb !== item.wb) return;
-    if (this.app.isEditing && !this.app.commitEdit()) return;
-    const latest = this.app.doc.history.peekUndo() === item.tx;
-    const r = revertChanges(this.app.doc, item.tx);
+    const s = this.owner(item);
+    if (!s || s.doc.wb !== item.wb) return;
+    if (this.shown(s) && this.app.isEditing && !this.app.commitEdit()) return;
+    const latest = s.doc.history.peekUndo() === item.tx;
+    const r = revertChanges(s.doc, item.tx);
     item.state = 'undone';
     item.undoneUnreported = true;
     item.note = !latest && r.skipped ? `Cells you changed afterwards were kept (${r.skipped}).` : undefined;
-    this.onChange?.(item);
+    this.notify(s, item);
   }
 
   /** Live data arrived: fill in previews that were waiting for it. */
   private dataArrived(): void {
-    const doc = this.app.doc;
-    for (const it of this.items) {
-      if (it.kind !== 'proposal' || it.wb !== doc.wb || !previewLoading(it.p.preview)) continue;
-      if (it.state === 'pending') {
-        const next = previewChanges(doc, it.p.changes);
-        if (!next.error) it.p.preview = next;
-      } else if (it.state === 'applied') {
-        // Already in the sheet: show what the cells hold now
-        for (const d of it.p.preview.edits) {
-          const s = doc.wb.sheetByName(d.sheet);
-          const at = parseRange(d.cell);
-          if (!s || !at || !d.after.startsWith('#BUSY!')) continue;
-          d.after = displayText(doc, s, at.r1, at.c1);
-          const sp = doc.engine.spillAt(s, at.r1, at.c1);
-          if (sp && (sp.r2 > sp.r1 || sp.c2 > sp.c1)) d.spill = formatRange(sp);
-        }
-      } else continue;
-      this.onChange?.(it);
+    for (const s of this.sessions.values()) {
+      const doc = s.doc;
+      for (const it of s.items) {
+        if (it.kind !== 'proposal' || it.wb !== doc.wb || !previewLoading(it.p.preview)) continue;
+        if (it.state === 'pending') {
+          const next = previewChanges(doc, it.p.changes);
+          if (!next.error) it.p.preview = next;
+        } else if (it.state === 'applied') {
+          // Already in the sheet: show what the cells hold now
+          for (const d of it.p.preview.edits) {
+            const sh = doc.wb.sheetByName(d.sheet);
+            const at = parseRange(d.cell);
+            if (!sh || !at || !d.after.startsWith('#BUSY!')) continue;
+            d.after = displayText(doc, sh, at.r1, at.c1);
+            const sp = doc.engine.spillAt(sh, at.r1, at.c1);
+            if (sp && (sp.r2 > sp.r1 || sp.c2 > sp.c1)) d.spill = formatRange(sp);
+          }
+        } else continue;
+        this.notify(s, it);
+      }
     }
   }
 
-  /** Keeps cards in step with Undo/Redo, and starts over when another file is opened. */
-  private docChanged(e: DocEvent): void {
-    if (e.type === 'reset' && this.app.doc.wb !== this.wb) {
-      for (const it of this.items) if (it.kind === 'proposal' && it.state === 'pending') this.settle(it, 'stopped', { status: 'stopped' }, 'Another workbook was opened.');
-      this.stop();
+  /** Keeps cards in step with Undo/Redo, and stops when another file is opened into the tab. */
+  private docChanged(s: ChatSession, e: DocEvent): void {
+    if (e.type === 'reset' && s.doc.wb !== s.wb) {
+      for (const it of s.items) if (it.kind === 'proposal' && it.state === 'pending') this.settle(it, 'stopped', { status: 'stopped' }, 'Another workbook was opened.');
+      s.ctl?.abort();
       return;
     }
     if (e.type !== 'change' || e.direction === 'do') return;
-    for (const it of this.items) {
+    for (const it of s.items) {
       if (it.kind !== 'proposal' || it.tx !== e.tx) continue;
       if (e.direction === 'undo' && it.state === 'applied') {
         it.state = 'undone';
@@ -366,10 +429,9 @@ export class AiController {
       } else if (e.direction === 'redo' && it.state === 'undone') {
         it.state = 'applied';
         it.undoneUnreported = false;
-      }
-      else continue;
+      } else continue;
       it.note = undefined;
-      this.onChange?.(it);
+      this.notify(s, it);
     }
   }
 

@@ -205,6 +205,15 @@ Yellow cells are the ones meant for you to change. Your favorite NFL team, fanta
 
 ## 10. Files, saving and Excel
 
+- **Tabs.** Each open workbook gets a tab at the top of the window, like a web browser.
+  - **Ctrl+N** (or **Ctrl+T**, or the **+** button) starts a new workbook in a new tab.
+  - Opening a file, from Gridline or from File Explorer, adds a tab. A file that's already open just switches to its tab.
+  - **Ctrl+Tab** and **Ctrl+Shift+Tab** move between tabs. Drag a tab to reorder it.
+  - **Ctrl+W** (or the **×**, or a middle-click) closes a tab. **Ctrl+Shift+T** reopens the last file you closed.
+  - A dot on a tab means it has unsaved changes. Closing the window asks about every unsaved workbook at once.
+  - Right-click a tab to close other tabs, show the file in its folder, copy its path, or move it to a window of its own.
+  - You can copy and paste between tabs, formatting included.
+  - To open files in a new window instead, change **Settings → Files & saving → Open files in**.
 - **Save (Ctrl+S)** keeps the file's current format. **Save as (Ctrl+Shift+S)** can save as `.xlsx`, `.xlsm` (with macros) or `.csv`.
 - **CSV files** hold one sheet of values only. If your workbook has formatting, formulas or several sheets, Gridline asks whether to keep the CSV or save an `.xlsx` copy.
 - **AutoSave** (**Settings → Files & saving**) saves `.xlsx` files that already have a location every few minutes.
@@ -269,7 +278,9 @@ Every command can also be found with **Ctrl+K**. **Ctrl+/** shows this list insi
 | --- | --- |
 | Search commands, cells, sheets and functions | Ctrl+K |
 | Home page | Ctrl+Shift+H |
-| New workbook / new window | Ctrl+N / Ctrl+Shift+N |
+| New workbook (new tab) / new window | Ctrl+N or Ctrl+T / Ctrl+Shift+N |
+| Next / previous workbook tab | Ctrl+Tab / Ctrl+Shift+Tab |
+| Close the tab / reopen the last closed file | Ctrl+W / Ctrl+Shift+T |
 | Open / Save / Save as | Ctrl+O / Ctrl+S / Ctrl+Shift+S |
 | Settings | Ctrl+, |
 | Ask AI (Developer branch) | Ctrl+Shift+A |

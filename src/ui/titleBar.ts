@@ -8,17 +8,11 @@ import { showMenu, tooltip, type MenuItem } from './widgets';
 
 export class TitleBar {
   readonly el: HTMLElement;
-  private nameEl: HTMLSpanElement;
-  private extEl: HTMLSpanElement;
-  private stateEl: HTMLSpanElement;
   private themeBtn!: HTMLButtonElement;
   private undoBtn!: HTMLButtonElement;
   private redoBtn!: HTMLButtonElement;
 
   constructor(private app: App) {
-    this.nameEl = h('span', { class: 'name' }, 'Untitled');
-    this.extEl = h('span', { class: 'ext' });
-    this.stateEl = h('span', { class: 'saved' });
     this.el = h('header', { class: 'titlebar' });
     this.rebuild();
   }
@@ -39,7 +33,7 @@ export class TitleBar {
       tooltip(this.redoBtn, () => (app.doc.history.peekRedoLabel() ? `Redo ${app.doc.history.peekRedoLabel()}` : 'Redo'), 'Ctrl+Y');
       quick.append(save, this.undoBtn, this.redoBtn);
     }
-    const title = h('div', { class: 'doc-title', title: '' }, this.nameEl, this.extEl, this.stateEl);
+
     const search = s.bool('appearance.showSearch')
       ? h('div', { class: 'cmd-search', role: 'button', tabindex: '0', onclick: () => openPalette(app) }, icon(L.Search, 14), h('span', { class: 'label' }, 'Search commands, functions, cells…'), kbd('Ctrl+K'))
       : null;
@@ -51,7 +45,7 @@ export class TitleBar {
     const parts: (HTMLElement | null)[] = [
       brand,
       quick,
-      title,
+      app.bookStrip.el,
       h('div', { class: 'spacer' }),
       search ?? h('div', { class: 'spacer' }),
       h('div', { class: 'spacer' }),
@@ -65,17 +59,6 @@ export class TitleBar {
 
   refresh(): void {
     const d = this.app.doc;
-    const m = /^(.*?)(\.[^.]+)?$/.exec(d.fileName)!;
-    this.nameEl.textContent = m[1] || d.fileName;
-    this.extEl.textContent = m[2] ?? '';
-    this.stateEl.innerHTML = '';
-    if (d.dirty) {
-      this.stateEl.className = 'dirty';
-      this.stateEl.title = 'Unsaved changes';
-    } else {
-      this.stateEl.className = 'saved';
-      this.stateEl.textContent = d.filePath ? 'Saved' : '';
-    }
     this.themeBtn.innerHTML = '';
     this.themeBtn.append(icon(this.app.isDark ? L.Sun : L.Moon, 16));
     if (this.undoBtn?.isConnected) {

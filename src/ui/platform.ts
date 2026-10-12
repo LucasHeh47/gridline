@@ -92,6 +92,7 @@ const webFallback: Omit<GridlineApi, 'isDesktop'> & { isDesktop: boolean } = {
   showInFolder: () => undefined,
   confirmClose: () => undefined,
   onRequestClose: () => undefined,
+  onOpenPaths: () => undefined,
   toggleDevTools: () => undefined,
   appVersion: async () => __APP_VERSION__,
   async fetchData(url, opts) {

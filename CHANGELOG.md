@@ -17,6 +17,14 @@
 
 ## 1.0.5
 
+- **Tabs for workbooks.** Open several files in one window, each in its own tab at the top, like a web browser:
+  - **Ctrl+N** opens a new workbook in a new tab;
+  - files you open, from Gridline or from File Explorer, open in tabs too;
+  - **Ctrl+Tab** switches tabs, **Ctrl+W** closes one and **Ctrl+Shift+T** reopens the last file you closed;
+  - drag tabs to reorder them, and right-click one for more options;
+  - a dot shows which ones have unsaved changes;
+  - copy and paste works between tabs, formatting included;
+  - AutoSave covers every open file.
 - **Menus close when you click elsewhere.** Right-click menus, ribbon dropdowns, color and font pickers and filter menus now close when you click the sheet, the title bar or anywhere else, when you scroll, when the window loses focus, and when it's resized. Clicking a dropdown's button again closes it.
 - **Better keyboard use in menus.** → opens a submenu and ← goes back; Home and End jump to the first and last item; typing a letter jumps to the next item starting with it; disabled items are skipped. Escape closes one level at a time, and focus goes back to where you were.
 - **A fresh look.** Gridline now looks less like a copy of Excel:

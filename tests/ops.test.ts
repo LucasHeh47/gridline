@@ -4,7 +4,7 @@ import { CFEvaluator } from '../src/core/cf';
 import { createChart, chartData } from '../src/core/charts';
 import { adjustForStructure, cycleAbsolute, translateFormula } from '../src/core/formula/refs';
 import { applyStyle, mergeCells } from '../src/core/ops/cells';
-import { copyRange, pasteClip, pasteText } from '../src/core/ops/clipboard';
+import { clipForWorkbook, copyRange, pasteClip, pasteText } from '../src/core/ops/clipboard';
 import { applyFilter, removeDuplicates, sortRange } from '../src/core/ops/data';
 import { autofill } from '../src/core/ops/fill';
 import { addSheet, deleteSheet, renameSheet } from '../src/core/ops/sheets';
@@ -112,6 +112,25 @@ describe('editing operations', () => {
     d.transact('paste', (tx) => pasteClip(tx, d, clip, s, R('A5'), 'all'));
     expect(s.getCell(0, 2)?.f).toBe('A5+1');
     expect(val(d, 'C1')).toBe(3);
+  });
+
+  it('pastes into another workbook (tab) with the right styles, and never touches the source', () => {
+    const a = makeDoc({ A1: '7', B1: '=A1*2' });
+    const sa = a.wb.activeSheet;
+    a.transact('style', (tx) => applyStyle(tx, a.wb, sa, [R('A1:B1')], { bold: true, fill: '#ffeb9c' }));
+    const b = makeDoc();
+    // b's style table differs: give it styles of its own first
+    b.transact('style', (tx) => applyStyle(tx, b.wb, b.wb.activeSheet, [R('Z1')], { italic: true }));
+    const clip = copyRange(a, sa, R('A1:B1'), true);
+    const moved = clipForWorkbook(clip, a.wb, b.wb);
+    expect(moved.cut).toBe(false);
+    const sb = b.wb.activeSheet;
+    b.transact('paste', (tx) => pasteClip(tx, b, moved, sb, R('C3'), 'all'));
+    const st = b.wb.styles.get(sb.getCell(2, 2)?.s);
+    expect([st.bold, st.fill, st.italic]).toEqual([true, '#ffeb9c', undefined]);
+    expect(val(b, 'D3')).toBe(14);
+    // The source workbook is unchanged (the app empties it itself after a cut)
+    expect(val(a, 'A1')).toBe(7);
   });
 
   it('pastes plain text from other apps', () => {

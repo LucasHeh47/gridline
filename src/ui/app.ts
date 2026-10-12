@@ -11,7 +11,7 @@ import type { Transaction } from '../core/history';
 import { csvToWorkbook, decodeText, encodeCSV, sheetToCSV } from '../core/io/csv';
 import { readXlsx, writeXlsx } from '../core/io/xlsx';
 import { applyStyle, clearRanges, fillSelectionWithInput, setCellInput, type ClearWhat, type PatchFn } from '../core/ops/cells';
-import { copyRange, pasteClip, pasteText, type ClipData, type PasteMode } from '../core/ops/clipboard';
+import { clipForWorkbook, copyRange, pasteClip, pasteText, type ClipData, type PasteMode } from '../core/ops/clipboard';
 import { currentRegion } from '../core/ops/data';
 import { autofill, fillDownExtent, type FillMode } from '../core/ops/fill';
 import { setColumnWidth, setRowHeight } from '../core/ops/structure';
@@ -20,6 +20,7 @@ import type { StylePatch } from '../core/styles';
 import { Sheet, Workbook } from '../core/workbook';
 import type { OpenedFile, SaveKind } from '../shared/api';
 import { advancedFormat } from './advancedFormat';
+import { BookTabStrip, newBookTab, type BookTab } from './bookTabs';
 import { STEP_EXAMPLES } from '../core/macros/steps';
 import { ChartLayer } from './charts/ChartLayer';
 import { ButtonLayer } from './macros/ButtonLayer';
@@ -137,7 +138,14 @@ export class App {
   commands: Commands;
   findBar: FindBar;
   showFormulas = false;
-  clipboard: { clip: ClipData; text: string } | null = null;
+  /** Copied cells (and the workbook they came from: tabs share one clipboard). */
+  clipboard: { clip: ClipData; text: string; doc: Doc } | null = null;
+  /** Open workbooks, one tab each, and the one shown. */
+  books: BookTab[] = [];
+  book!: BookTab;
+  bookStrip!: BookTabStrip;
+  /** Files of recently closed tabs (Ctrl+Shift+T reopens them). */
+  private closedPaths: string[] = [];
   formatPainter: { sheetId: number; range: Range; sticky: boolean } | null = null;
   lastFill: { src: Range; target: Range; mode: FillMode } | null = null;
   private tabStartCol: number | null = null;
@@ -183,12 +191,15 @@ export class App {
       if (this.settings.str('appearance.theme') === 'system') this.applyTheme();
     });
     this.doc = new Doc(this.blankWorkbook());
+    this.book = newBookTab(this.doc);
+    this.books = [this.book];
     this.cf = new CFEvaluator(this.doc);
     this.macros = new MacroController(this);
     this.ai = new AiController(this);
     this.commands = new Commands(this);
     this.grid = new GridView(this);
     this.editor = new EditController(this);
+    this.bookStrip = new BookTabStrip(this);
     this.titlebar = new TitleBar(this);
     this.ribbon = new Ribbon(this);
     this.updates = new Updates(this);
@@ -223,8 +234,9 @@ export class App {
     this.bindKeys();
     this.bindDrop();
     platform.onRequestClose(() => this.requestClose());
+    platform.onOpenPaths((paths) => void this.openPaths(paths));
     window.addEventListener('beforeunload', (e) => {
-      if (!isDesktop && this.doc.dirty) e.preventDefault();
+      if (!isDesktop && this.books.some((b) => b.doc.dirty)) e.preventDefault();
     });
     this.refreshAll();
     setFocusFallback(() => this.focusGrid());
@@ -349,8 +361,13 @@ export class App {
     if (autosave > 0 && isDesktop) {
       this.timers.push(
         setInterval(() => {
-          const d = this.doc;
-          if (d.dirty && d.filePath && (d.fileType === 'xlsx' || d.fileType === 'xlsm') && !this.isEditing && !this.macros.running) void this.save().then((ok) => ok && this.statusbar.flash('AutoSaved'));
+          if (this.isEditing || this.macros.running) return;
+          for (const b of this.books) {
+            const d = b.doc;
+            if (!(d.dirty && d.filePath && (d.fileType === 'xlsx' || d.fileType === 'xlsm'))) continue;
+            if (b === this.book) void this.save().then((ok) => ok && this.statusbar.flash('AutoSaved'));
+            else void this.saveInBackground(d);
+          }
         }, autosave * 60_000),
       );
     }
@@ -478,27 +495,48 @@ export class App {
 
   /** Before quitting to install an update: offer to save. Returns false to cancel. */
   async saveBeforeQuit(): Promise<boolean> {
-    if (!this.doc.dirty) return true;
+    return this.saveOrDiscard(this.books.filter((b) => b.doc.dirty), 'Gridline will close to finish updating.');
+  }
+
+  /**
+   * Asks what to do with unsaved workbooks before they close: save them, throw the changes away,
+   * or cancel. Returns true when it's fine to close them.
+   */
+  private async saveOrDiscard(dirty: BookTab[], why: string): Promise<boolean> {
+    if (!dirty.length) return true;
+    const one = dirty.length === 1;
+    if (one && !this.switchBook(dirty[0])) return false;
+    const body = one ? why : h('div', null, h('p', null, why), h('ul', { class: 'unsaved-list' }, ...dirty.map((b) => h('li', null, b.doc.fileName))));
     const choice = await dialog<'save' | 'discard' | 'cancel'>(
-      `Save changes to "${this.doc.fileName}" first?`,
-      'Gridline will close to finish updating.',
+      one ? `Save changes to "${dirty[0].doc.fileName}"?` : `Save changes to ${dirty.length} workbooks?`,
+      body,
       [
-        { label: 'Save', value: 'save', primary: true },
+        { label: one ? 'Save' : 'Save all', value: 'save', primary: true },
         { label: "Don't save", value: 'discard', danger: true },
         { label: 'Cancel', value: 'cancel' },
       ],
       { cancelValue: 'cancel' },
     );
     if (choice === 'cancel') return false;
-    if (choice === 'save') return this.save();
-    this.doc.markSaved();
+    if (choice === 'save') {
+      for (const b of dirty) {
+        if (!this.switchBook(b) || !(await this.save())) return false;
+      }
+    }
     return true;
   }
 
-  private attachDoc(): void {
-    this.cf = new CFEvaluator(this.doc);
-    this.doc.selectionProvider = () => this.sel.snapshot(this.sheet.id);
-    this.doc.on((e) => this.onDocEvent(e));
+  private attachDoc(doc: Doc = this.doc): void {
+    if (doc === this.doc) this.cf = new CFEvaluator(doc);
+    doc.selectionProvider = () => (doc === this.doc ? this.sel.snapshot(this.sheet.id) : undefined);
+    doc.on((e) => {
+      if (doc === this.doc) this.onDocEvent(e);
+      else {
+        // A tab in the background changed (AutoSave, live data, a move from another tab)
+        this.bookStrip.render();
+        platform.setDirty(this.books.some((b) => b.doc.dirty));
+      }
+    });
   }
 
   private onDocEvent(e: DocEvent): void {
@@ -560,7 +598,8 @@ export class App {
     this.macroEditor?.refresh();
     this.panel?.refresh();
     this.findBar?.refresh();
-    platform.setDirty(this.doc.dirty);
+    this.bookStrip?.render();
+    platform.setDirty(this.books.some((b) => b.doc.dirty));
   }
 
   refreshFormulaBar(): void {
@@ -1006,7 +1045,7 @@ export class App {
       return;
     }
     const clip = copyRange(this.doc, this.sheet, this.sel.range, cut);
-    this.clipboard = { clip, text: clip.text };
+    this.clipboard = { clip, text: clip.text, doc: this.doc };
     await platform.writeClipboard({ text: clip.text, html: clip.html });
     this.grid.setCopyMarquee({ sheetId: this.sheet.id, range: clip.range });
     const n = clip.cells.length * (clip.cells[0]?.length ?? 0);
@@ -1019,11 +1058,24 @@ export class App {
     const internal = this.clipboard && (text === this.clipboard.text || (!text && this.clipboard));
     let out: Range | undefined;
     if (internal) {
-      const clip = this.clipboard!.clip;
-      const tx = this.transact(clip.cut ? 'Move cells' : 'Paste', (tx) => {
+      const from = this.clipboard!;
+      // From another tab: styles are re-created in this workbook, and a cut empties the source there
+      const other = from.doc !== this.doc;
+      const clip = other ? clipForWorkbook(from.clip, from.doc.wb, this.doc.wb) : from.clip;
+      const tx = this.transact(from.clip.cut ? 'Move cells' : 'Paste', (tx) => {
         out = pasteClip(tx, this.doc, clip, this.sheet, this.isWholeSheet(sel) ? { r1: sel.r1, c1: sel.c1, r2: sel.r1, c2: sel.c1 } : sel, mode);
       });
-      if (tx && clip.cut) {
+      if (tx && from.clip.cut) {
+        if (other && this.books.some((b) => b.doc === from.doc)) {
+          const src = from.doc.wb.sheetById(from.clip.sheetId);
+          if (src) {
+            from.doc.transact(`Move cells to ${this.doc.fileName}`, (t) => {
+              from.clip.srcRows.forEach((r) => {
+                for (let c = from.clip.range.c1; c <= from.clip.range.c2; c++) if (src.getCell(r, c)) t.setCell(src, r, c, undefined);
+              });
+            });
+          }
+        }
         this.clipboard = null;
         this.grid.setCopyMarquee(null);
       }
@@ -1422,14 +1474,22 @@ export class App {
     }
   }
 
+  /** A new, empty workbook in its own tab. */
   async newWorkbook(): Promise<void> {
-    if (isDesktop) {
-      platform.newWindow();
-      return;
-    }
-    if (this.doc.dirty && !(await this.confirmDiscard())) return;
-    this.loadWorkbook(new Workbook(), null, 'Untitled', null);
+    if (this.isEditing && !this.commitEdit()) return;
+    const doc = new Doc(this.blankWorkbook());
+    doc.fileName = this.untitledName();
+    this.addBook(doc);
     void this.macros.workbookOpened(null, false);
+  }
+
+  /** "Untitled", or "Untitled 2", "Untitled 3"… when that's taken by another tab. */
+  private untitledName(): string {
+    const taken = new Set(this.books.map((b) => b.doc.fileName));
+    if (!taken.has('Untitled')) return 'Untitled';
+    let n = 2;
+    while (taken.has(`Untitled ${n}`)) n++;
+    return `Untitled ${n}`;
   }
 
   /** Starts a preset. Opens in this window when it's empty, otherwise in a new one. Without an id, shows the presets. */
@@ -1438,15 +1498,8 @@ export class App {
       this.openHome('new');
       return;
     }
-    const pick = id;
-    if (!this.isPristine()) {
-      if (isDesktop) {
-        platform.newWindow(undefined, pick);
-        return;
-      }
-      if (this.doc.dirty && !(await this.confirmDiscard())) return;
-    }
-    this.loadTemplate(pick);
+    // Opens in a new tab unless this one is still empty
+    this.loadTemplate(id);
   }
 
   private loadTemplate(id: string): void {
@@ -1466,25 +1519,41 @@ export class App {
   }
 
   async openRecent(path: string): Promise<void> {
-    if (!this.isPristine() && isDesktop) {
-      platform.newWindow(path);
+    const open = this.findBook(path);
+    if (open) {
+      this.switchBook(open);
       return;
     }
     try {
       const f = await platform.openPath(path);
-      if (f) await this.loadFile(f);
+      if (f) await this.openInBestWindow(f);
     } catch (err) {
       toast((err as Error).message, { kind: 'error' });
     }
   }
 
+  /** Files opened from Explorer while Gridline runs, or several at once. */
+  private async openPaths(paths: string[]): Promise<void> {
+    for (const p of paths) await this.openRecent(p);
+  }
+
+  /** Opens a file where Settings → Files says: a new tab (default), a new window, or this tab. */
   private async openInBestWindow(f: OpenedFile): Promise<void> {
+    const open = f.path ? this.findBook(f.path) : undefined;
+    if (open) {
+      this.switchBook(open);
+      return;
+    }
     const where = this.settings.str('files.openIn');
-    if (!this.isPristine() && f.path && isDesktop && where !== 'same') {
+    if (where === 'new' && !this.isPristine() && f.path && isDesktop) {
       platform.newWindow(f.path);
       return;
     }
-    if (!this.isPristine() && this.doc.dirty && !(await this.confirmDiscard())) return;
+    if (where === 'same' && !this.isPristine()) {
+      if (this.doc.dirty && !(await this.confirmDiscard())) return;
+      await this.loadFile(f, true);
+      return;
+    }
     await this.loadFile(f);
   }
 
@@ -1495,7 +1564,7 @@ export class App {
     ])) as boolean;
   }
 
-  async loadFile(f: OpenedFile): Promise<void> {
+  async loadFile(f: OpenedFile, replace = false): Promise<void> {
     const name = f.name;
     const ext = (/\.([^.]+)$/.exec(name)?.[1] ?? '').toLowerCase();
     this.statusbar.flash(`Opening ${name}…`);
@@ -1516,7 +1585,7 @@ export class App {
         wb = csvToWorkbook(text, name, type === 'tsv' ? '\t' : undefined);
       }
       // An .xlsx with VBA code in it is saved as a new .xlsm, never over the original
-      this.loadWorkbook(wb, ext === 'xlsx' && type === 'xlsm' ? null : f.path, name, type);
+      this.loadWorkbook(wb, ext === 'xlsx' && type === 'xlsm' ? null : f.path, name, type, replace);
       if (warnings.length) toast(warnings.join(' '), { ms: 9000 });
       this.statusbar.flash(`Opened ${name}`);
       void this.macros.workbookOpened(f.path, true);
@@ -1525,14 +1594,23 @@ export class App {
     }
   }
 
-  private loadWorkbook(wb: Workbook, path: string | null, name: string, type: 'xlsx' | 'xlsm' | 'csv' | 'tsv' | null): void {
+  /** Shows a workbook: in a new tab, or in this one when it's still empty (or `replace`). */
+  private loadWorkbook(wb: Workbook, path: string | null, name: string, type: 'xlsx' | 'xlsm' | 'csv' | 'tsv' | null, replace = false): void {
+    if (!replace && !this.isPristine()) {
+      const doc = new Doc(wb);
+      doc.filePath = path;
+      doc.fileName = name;
+      doc.fileType = type;
+      this.addBook(doc);
+      return;
+    }
+    if (this.clipboard?.doc === this.doc) this.clipboard = null;
     this.doc.load(wb);
     this.doc.filePath = path;
     this.doc.fileName = name;
     this.doc.fileType = type;
     this.csvChoice = null;
     this.cf = new CFEvaluator(this.doc);
-    this.clipboard = null;
     this.grid.setCopyMarquee(null);
     const s = this.sheet;
     this.selSheetId = s.id;
@@ -1686,23 +1764,160 @@ export class App {
   }
 
   private async requestClose(): Promise<void> {
-    if (!this.doc.dirty) {
-      platform.confirmClose();
-      return;
+    if (await this.saveOrDiscard(this.books.filter((b) => b.doc.dirty), "Your changes will be lost if you don't save them.")) platform.confirmClose();
+  }
+
+  // ---------- workbook tabs ----------
+
+  /** The tab showing this file, if it's open. */
+  findBook(path: string): BookTab | undefined {
+    const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+    return this.books.find((b) => b.doc.filePath && norm(b.doc.filePath) === norm(path));
+  }
+
+  /** Shows another open workbook. */
+  switchBook(tab: BookTab): boolean {
+    if (tab === this.book) return true;
+    if (!this.books.includes(tab)) return false;
+    if (this.isEditing && !this.commitEdit()) return false;
+    if (this.macros.running) {
+      toast('Wait for the macro to finish first (Esc stops it).');
+      return false;
     }
-    const choice = await dialog<'save' | 'discard' | 'cancel'>(
-      `Save changes to "${this.doc.fileName}"?`,
-      'Your changes will be lost if you don\'t save them.',
-      [
-        { label: 'Save', value: 'save', primary: true },
-        { label: 'Don\'t save', value: 'discard', danger: true },
-        { label: 'Cancel', value: 'cancel' },
-      ],
-      { cancelValue: 'cancel' },
-    );
-    if (choice === 'cancel') return;
-    if (choice === 'save' && !(await this.save())) return;
-    platform.confirmClose();
+    this.stashBook();
+    this.showBook(tab);
+    return true;
+  }
+
+  /** Remembers where you were in the workbook being left. */
+  private stashBook(): void {
+    const b = this.book;
+    const s = this.sheet;
+    s.view.activeRow = this.sel.active.row;
+    s.view.activeCol = this.sel.active.col;
+    s.view.scrollX = this.grid.scrollX;
+    s.view.scrollY = this.grid.scrollY;
+    b.sel = this.sel.snapshot(s.id);
+    b.csvChoice = this.csvChoice;
+    b.macros = this.macros.saveState();
+  }
+
+  private showBook(tab: BookTab): void {
+    this.book = tab;
+    this.doc = tab.doc;
+    this.csvChoice = tab.csvChoice;
+    this.cf = new CFEvaluator(this.doc);
+    this.formatPainter = null;
+    this.lastFill = null;
+    const clip = this.clipboard;
+    this.grid.setCopyMarquee(clip && clip.doc === this.doc ? { sheetId: clip.clip.sheetId, range: clip.clip.range } : null);
+    const wb = this.doc.wb;
+    if (!wb.sheetById(wb.activeSheetId)) wb.activeSheetId = wb.sheets[0].id;
+    const s = this.sheet;
+    this.selSheetId = s.id;
+    if (tab.sel && tab.sel.sheetId === s.id) this.sel.restore(tab.sel);
+    else this.sel.setCell(s, s.view.activeRow, s.view.activeCol);
+    this.macros.restoreState(tab.macros);
+    this.panel.close();
+    this.grid.relayout();
+    this.grid.restoreScroll();
+    this.refreshAll();
+    this.grid.draw();
+    this.focusGrid();
+  }
+
+  /** Adds a workbook as a new tab (after the others) and shows it. */
+  private addBook(doc: Doc): BookTab {
+    if (this.isEditing) this.commitEdit();
+    this.stashBook();
+    const tab = newBookTab(doc);
+    this.attachDoc(doc);
+    this.books.push(tab);
+    this.showBook(tab);
+    return tab;
+  }
+
+  /** Closes a tab, asking to save it first if needed. Returns false if cancelled. */
+  async closeBook(tab: BookTab): Promise<boolean> {
+    if (!this.books.includes(tab)) return true;
+    if (tab === this.book && this.macros.running) {
+      toast('Wait for the macro to finish first (Esc stops it).');
+      return false;
+    }
+    if (tab.doc.dirty && !(await this.saveOrDiscard([tab], "Your changes will be lost if you don't save them."))) return false;
+    this.dropBook(tab);
+    return true;
+  }
+
+  /** Closes several tabs, one at a time (stops if one is cancelled). */
+  async closeBooks(tabs: BookTab[]): Promise<void> {
+    for (const t of [...tabs]) if (!(await this.closeBook(t))) return;
+  }
+
+  private dropBook(tab: BookTab): void {
+    const i = this.books.indexOf(tab);
+    if (i < 0) return;
+    if (tab.doc.filePath) {
+      this.closedPaths = [...this.closedPaths.filter((p) => p !== tab.doc.filePath), tab.doc.filePath].slice(-20);
+    }
+    if (this.books.length === 1) {
+      // Closing the last tab closes the window, like a browser (the web version starts over)
+      if (isDesktop) {
+        platform.setDirty(false);
+        platform.confirmClose();
+        return;
+      }
+      const fresh = newBookTab(new Doc(this.blankWorkbook()));
+      this.attachDoc(fresh.doc);
+      this.books.push(fresh);
+    }
+    this.books.splice(i, 1);
+    if (this.clipboard?.doc === tab.doc) this.clipboard = null;
+    if (tab === this.book) this.showBook(this.books[Math.min(i, this.books.length - 1)]);
+    tab.doc.dispose();
+    this.refreshAll();
+  }
+
+  /** Drag a tab to a new position. */
+  moveBook(from: number, to: number): void {
+    if (from < 0 || from >= this.books.length) return;
+    const [t] = this.books.splice(from, 1);
+    this.books.splice(Math.max(0, Math.min(this.books.length, to)), 0, t);
+    this.bookStrip.render();
+  }
+
+  /** Next or previous tab (Ctrl+Tab, Ctrl+Shift+Tab). */
+  cycleBook(dir: 1 | -1): void {
+    if (this.books.length < 2) return;
+    const i = this.books.indexOf(this.book);
+    this.switchBook(this.books[(i + dir + this.books.length) % this.books.length]);
+  }
+
+  /** Opens the file of the tab closed most recently (Ctrl+Shift+T). */
+  async reopenClosedBook(): Promise<void> {
+    const p = this.closedPaths.pop();
+    if (p) await this.openRecent(p);
+    else this.statusbar.flash('No recently closed files to reopen');
+  }
+
+  /** Moves a saved workbook into a window of its own. */
+  moveBookToWindow(tab: BookTab): void {
+    const p = tab.doc.filePath;
+    if (!p || tab.doc.dirty) return;
+    platform.newWindow(p);
+    this.dropBook(tab);
+  }
+
+  /** AutoSave for tabs in the background (no dialogs: only files that already have a place). */
+  private async saveInBackground(d: Doc): Promise<void> {
+    if (!d.filePath) return;
+    try {
+      const data = await writeXlsx(d, { macroEnabled: d.fileType === 'xlsm' });
+      const res = await platform.saveFile(d.filePath, data);
+      if (res.ok) d.markSaved();
+    } catch {
+      // tried again at the next AutoSave
+    }
   }
 
   private bindDrop(): void {
@@ -1726,14 +1941,16 @@ export class App {
       e.preventDefault();
       overlay?.remove();
       overlay = null;
-      const file = e.dataTransfer?.files?.[0];
-      if (!file) return;
-      if (!/\.(xlsx|xlsm|csv|tsv|txt)$/i.test(file.name)) {
-        toast('Gridline opens .xlsx, .csv and .tsv files.', { kind: 'error' });
-        return;
+      const files = [...(e.dataTransfer?.files ?? [])];
+      if (!files.length) return;
+      for (const file of files) {
+        if (!/\.(xlsx|xlsm|csv|tsv|txt)$/i.test(file.name)) {
+          toast(`Gridline opens .xlsx, .csv and .tsv files ("${file.name}" isn't one).`, { kind: 'error' });
+          continue;
+        }
+        const f = await platform.readDroppedFile(file);
+        await this.openInBestWindow(f);
       }
-      const f = await platform.readDroppedFile(file);
-      await this.openInBestWindow(f);
     });
   }
 

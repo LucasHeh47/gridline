@@ -24,12 +24,21 @@ const MSGBOX_BUTTONS: [string, number][][] = [
   [['Retry', 4], ['Cancel', 2]],
 ];
 
+/** What a workbook tab remembers about its macros while another tab is shown. */
+export interface MacroTabState {
+  enabled: boolean;
+  banner: [string, BannerAction[]] | null;
+}
+
+type BannerAction = { label: string; primary?: boolean; run: () => void };
+
 export class MacroController {
   readonly runner: MacroRunner;
   /** Macros may run in this workbook (security). */
   enabled = true;
   readonly banner: HTMLElement;
   private pill: HTMLElement | null = null;
+  private bannerArgs: [string, BannerAction[]] | null = null;
   private pillTimer: ReturnType<typeof setTimeout> | undefined;
   /** Debug.Print output and run messages, shown in the macro editor. */
   readonly output: string[] = [];
@@ -124,7 +133,18 @@ export class MacroController {
     }
   }
 
-  private showBanner(text: string, actions: { label: string; primary?: boolean; run: () => void }[]): void {
+  saveState(): MacroTabState {
+    return { enabled: this.enabled, banner: this.banner.hidden ? null : this.bannerArgs };
+  }
+
+  restoreState(s: MacroTabState | undefined): void {
+    this.enabled = s?.enabled ?? true;
+    if (s?.banner) this.showBanner(...s.banner);
+    else this.hideBanner();
+  }
+
+  private showBanner(text: string, actions: BannerAction[]): void {
+    this.bannerArgs = [text, actions];
     this.banner.innerHTML = '';
     this.banner.append(
       icon(L.ShieldAlert, 16),

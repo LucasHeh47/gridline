@@ -121,7 +121,11 @@ export class Commands {
     const style = () => app.styleAtActive();
 
     // ---------- File ----------
-    a({ id: 'file.new', title: 'New workbook', category: 'File', keys: ['Ctrl+N'], icon: L.FilePlus, global: true, run: () => app.newWorkbook() });
+    a({ id: 'file.new', title: 'New workbook (new tab)', category: 'File', keys: ['Ctrl+N', 'Ctrl+T'], icon: L.FilePlus, keywords: 'tab blank', global: true, run: () => app.newWorkbook() });
+    a({ id: 'file.closeTab', title: 'Close this workbook tab', category: 'File', keys: ['Ctrl+W', 'Ctrl+F4'], icon: L.X, keywords: 'tab close file', global: true, run: () => void app.closeBook(app.book) });
+    a({ id: 'file.nextTab', title: 'Next workbook tab', category: 'File', keys: ['Ctrl+Tab'], icon: L.ArrowRight, keywords: 'tab switch', global: true, enabled: () => app.books.length > 1, run: () => app.cycleBook(1) });
+    a({ id: 'file.prevTab', title: 'Previous workbook tab', category: 'File', keys: ['Ctrl+Shift+Tab'], icon: L.ArrowLeft, keywords: 'tab switch', global: true, enabled: () => app.books.length > 1, run: () => app.cycleBook(-1) });
+    a({ id: 'file.reopenTab', title: 'Reopen closed workbook tab', category: 'File', keys: ['Ctrl+Shift+T'], icon: L.RotateCcw, keywords: 'tab undo close', global: true, run: () => void app.reopenClosedBook() });
     a({ id: 'file.home', title: 'Home — recent files and presets', category: 'File', keys: ['Ctrl+Shift+H'], icon: L.House, keywords: 'start page recent backstage file', global: true, run: () => app.openHome('home') });
     a({ id: 'file.template', title: 'New from a preset…', category: 'File', icon: L.LayoutTemplate, keywords: 'template budget loan mortgage debt savings net worth stocks crypto nfl fantasy football trip travel project tracker', global: true, run: () => app.openHome('new') });
     a({ id: 'file.open', title: 'Open…', category: 'File', keys: ['Ctrl+O'], icon: L.FolderOpen, global: true, run: () => app.openFile() });

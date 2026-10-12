@@ -5,7 +5,7 @@ import { adjustForMove, translateFormula } from '../formula/refs';
 import type { Transaction } from '../history';
 import { formatValue } from '../numfmt';
 import type { Scalar } from '../values';
-import type { Cell, Sheet } from '../workbook';
+import type { Cell, Sheet, Workbook } from '../workbook';
 import { setCellInput } from './cells';
 
 export interface ClipData {
@@ -142,6 +142,28 @@ export function parseTSV(text: string): string[][] {
 }
 
 /** Pastes data copied inside Gridline. Returns the destination range. */
+/**
+ * The same copied cells, ready to paste into another workbook: their styles are re-created in its
+ * style table (style numbers only mean something inside one workbook). Always a copy — the app
+ * empties the source itself after a cut.
+ */
+export function clipForWorkbook(clip: ClipData, from: Workbook, to: Workbook): ClipData {
+  const ids = new Map<number, number>();
+  const restyle = (id: number): number => {
+    const known = ids.get(id);
+    if (known !== undefined) return known;
+    const next = to.styles.intern(from.styles.get(id));
+    ids.set(id, next);
+    return next;
+  };
+  return {
+    ...clip,
+    cut: false,
+    sheetId: -1,
+    cells: clip.cells.map((row) => row.map((c) => (c && c.s !== undefined ? { ...c, s: restyle(c.s) } : c))),
+  };
+}
+
 export function pasteClip(tx: Transaction, doc: Doc, clip: ClipData, dst: Sheet, sel: Range, mode: PasteMode): Range {
   const src = doc.wb.sheetById(clip.sheetId);
   const srcRows = clip.cells.length;
