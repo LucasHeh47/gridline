@@ -69,6 +69,7 @@ export class AiPanel implements PanelContent {
   private sendBtn: HTMLButtonElement;
   private modelBtn: HTMLButtonElement;
   private usageEl: HTMLElement;
+  private footNote: HTMLElement;
   private rendered = new Map<ChatItem, HTMLElement>();
   private expanded = new Set<string>();
   private links: RefLinks;
@@ -92,6 +93,7 @@ export class AiPanel implements PanelContent {
       this.input.focus();
     } }, icon(L.SquarePen, 16));
     this.usageEl = h('span', { class: 'ai-usage' });
+    this.footNote = h('span');
     this.log = h('div', { class: 'ai-log', role: 'log', 'aria-live': 'polite' });
     this.input = h('textarea', { class: 'input ai-input', rows: 2, placeholder: 'Ask about this workbook…', spellcheck: true }) as HTMLTextAreaElement;
     this.input.addEventListener('keydown', (e) => {
@@ -102,7 +104,7 @@ export class AiPanel implements PanelContent {
     });
     this.input.addEventListener('input', () => this.grow());
     this.sendBtn = h('button', { class: 'btn primary ai-send', onclick: () => (ai.running ? ai.stop() : this.submit()) }) as HTMLButtonElement;
-    const compose = h('div', { class: 'ai-compose' }, h('div', { class: 'ai-input-row' }, this.input, this.sendBtn), h('div', { class: 'ai-foot' }, h('span', null, 'Nothing changes until you apply it.'), this.usageEl));
+    const compose = h('div', { class: 'ai-compose' }, h('div', { class: 'ai-input-row' }, this.input, this.sendBtn), h('div', { class: 'ai-foot' }, this.footNote, this.usageEl));
     this.el = h('div', { class: 'ai-panel' }, h('div', { class: 'ai-bar' }, this.modelBtn, h('span', { style: { flex: '1' } }), newChat), this.log, compose);
     ai.onChange = (item) => this.update(item);
     if (ai.hasKey === null) void ai.refreshKey();
@@ -172,6 +174,7 @@ export class AiPanel implements PanelContent {
     this.sendBtn.title = ai.running ? 'Stop' : 'Send (Enter)';
     this.sendBtn.setAttribute('aria-label', this.sendBtn.title);
     this.sendBtn.classList.toggle('stop', ai.running);
+    this.footNote.textContent = ai.autoApply ? 'Changes go straight into the sheet; each has an Undo button.' : 'Nothing changes until you apply it.';
     const u = ai.usage;
     this.usageEl.textContent = u.input || u.output ? `${tokens(u.input)} in · ${tokens(u.output)} out` : '';
     this.usageEl.title = 'Tokens used in this chat';
@@ -185,7 +188,13 @@ export class AiPanel implements PanelContent {
       { class: 'ai-empty' },
       icon(L.Sparkles, 28),
       h('h3', null, 'Ask about this workbook'),
-      h('p', null, 'The assistant reads the sheets, formulas, charts and rules it needs — every read is listed here — and proposes changes you review before anything is modified. Applied changes undo in one click.'),
+      h(
+        'p',
+        null,
+        this.app.ai.autoApply
+          ? 'The assistant reads the sheets, formulas, charts and rules it needs — every read is listed here. Its changes go straight into the sheet so you can see them, with a list of every changed cell and a one-click Undo.'
+          : 'The assistant reads the sheets, formulas, charts and rules it needs — every read is listed here — and proposes changes you review before anything is modified. Applied changes undo in one click.',
+      ),
       h('div', { class: 'ai-examples' }, ...EXAMPLES.map((t) => h('button', { class: 'ai-example', onclick: () => this.submit(t) }, t))),
     );
   }
@@ -230,6 +239,13 @@ export class AiPanel implements PanelContent {
           { class: 'ai-error' },
           icon(L.CircleAlert, 16),
           h('div', null, h('div', null, it.text), it.action === 'key' ? h('button', { class: 'btn outline', onclick: () => void askForKey(this.app) }, 'Update API key') : it.action === 'settings' ? h('button', { class: 'btn outline', onclick: () => this.app.openSettings('ai') }, 'Open AI settings') : null),
+        );
+      case 'notice':
+        return h(
+          'div',
+          { class: 'ai-notice' },
+          icon(L.TriangleAlert, 16),
+          h('div', null, h('div', null, it.text), it.action === 'settings' ? h('button', { class: 'btn outline', onclick: () => this.app.openSettings('ai') }, 'Open AI settings') : null),
         );
       case 'proposal':
         return this.card(it);
@@ -281,7 +297,17 @@ export class AiPanel implements PanelContent {
         feedback,
       );
     } else if (it.state === 'applied') {
-      card.append(h('div', { class: 'ai-row' }, h('button', { class: 'btn outline', title: 'Undo everything this change did', onclick: () => ai.undo(it) }, icon(L.Undo2, 14), 'Undo'), h('span', { class: 'ai-card-note' }, 'One undo step: ', h('em', null, it.tx?.label ?? p.title))));
+      const canFormat = !!ai.changedRange(it);
+      card.append(
+        h(
+          'div',
+          { class: 'ai-row' },
+          h('button', { class: 'btn outline', title: 'Undo everything this change did', onclick: () => ai.undo(it) }, icon(L.Undo2, 14), 'Undo'),
+          canFormat ? h('button', { class: 'btn outline', title: 'Style the changed cells as a table (Advanced format)', onclick: () => ai.format(it) }, icon(L.Sparkles, 14), 'Advanced format') : null,
+          canFormat ? h('button', { class: 'btn', title: 'Select the changed cells on the sheet', onclick: () => ai.show(it) }, icon(L.Crosshair, 14), 'Show') : null,
+        ),
+        h('p', { class: 'ai-card-note' }, 'One undo step: ', h('em', null, it.tx?.label ?? p.title)),
+      );
     }
     if (it.note) card.append(h('p', { class: 'ai-card-note' }, it.state === 'rejected' ? `Your feedback: “${it.note}”` : it.note));
     return card;

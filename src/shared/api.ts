@@ -87,12 +87,14 @@ export interface AiRequest {
   maxTokens?: number;
   /** Local provider: the server address, e.g. http://localhost:11434/v1 */
   baseUrl?: string;
+  /** Local provider: how many tokens the model may read at once (Ollama's num_ctx). */
+  contextSize?: number;
 }
 
 export type AiEvent =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
-  | { type: 'done'; stopReason: string; usage?: { input: number; output: number } }
+  | { type: 'done'; stopReason: string; usage?: { input: number; output: number }; warning?: string }
   | { type: 'error'; message: string };
 
 export interface AiApi {

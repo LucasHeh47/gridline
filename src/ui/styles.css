@@ -3814,6 +3814,22 @@ textarea.input {
 .ai-error .btn {
   margin-top: 8px;
 }
+.ai-notice {
+  display: flex;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: var(--text);
+}
+.ai-notice > svg {
+  flex: none;
+  color: var(--warn);
+  margin-top: 1px;
+}
+.ai-notice .btn {
+  margin-top: 8px;
+}
 .ai-card {
   border: 1px solid var(--border-strong);
   border-radius: 10px;

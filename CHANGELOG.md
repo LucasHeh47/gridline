@@ -4,12 +4,14 @@
 
 - **AI assistant (Beta, Developer branch).** Ask about your workbook or describe a job in plain English, for example: "Find duplicate transactions, but don't delete anything" or "Add a formula that categorizes these transactions". Open it from **Home → Ask AI** or with **Ctrl+Shift+A**.
   - **Works with the whole workbook**, not just what's on screen. It reads the sheets, formulas, charts, highlight rules and dropdowns it needs, and traces how cells depend on each other across sheets. Every read is listed in the chat.
-  - **Nothing changes without your approval.** Changes come as proposals that show every cell that changes (before → after, with the formula), plus formula results elsewhere that would change. Click **Apply** or **Reject**, or tell it what to do instead.
+  - **See changes right on the sheet.** Changes go straight into the workbook and are selected, so you can look at them. A card lists every cell that changed (before → after, with the formula) and formula results elsewhere that changed, with **Undo** and **Advanced format** buttons. To approve each change first, turn on **Ask before changing the workbook**.
+  - **Checked before it lands.** A change whose formulas would show errors (#SPILL!, #NAME?, #REF!…) isn't applied: the assistant is told exactly what's wrong and fixes it.
   - **One-click undo.** Each applied change is a single step with an **Undo** button. The button still works after you've made other edits, and keeps any cells you changed yourself since.
   - Use **Claude** with your own API key, or a **model on your computer** with Ollama or LM Studio, so the workbook never leaves it. Choose in **Settings → AI assistant**.
   - **Your API key stays secret.** It's encrypted with your computer's keychain and never shown again. Only Gridline's background process uses it, and only to talk to Anthropic. Keys pasted into the chat aren't sent, and keys found in a workbook are hidden from the AI.
   - Cell addresses in answers are links that jump to those cells.
   - **Uses real data, not made-up numbers.** The assistant knows Gridline's live-data functions, so "make a table with NFL quarterback stats" builds a live `NFL.LEADERS` table instead of typing in invented stats. It can also look up live data while it works.
+  - **Local models get the full instructions.** Ollama's default context (often 4,096 tokens) silently cut off over half of what the assistant needs to know, so models didn't realize they were in a spreadsheet. Gridline now sets it to 16,384 tokens (**Settings → AI assistant → Context size**) and warns when a chat outgrows it. A tip suggests a larger model when you pick a very small one.
   - **Works with more local models.** Some models, like Qwen3-Coder in Ollama, write their actions as text instead of sending them properly. Gridline now recognizes these, so the changes show up as proposals instead of code in the chat. Reasoning blocks (`<think>…</think>`) are hidden.
   - Proposal previews show "Loading…" while live data downloads and fill in when it arrives. A formula that fills a whole table shows how much of the sheet it covers.
 

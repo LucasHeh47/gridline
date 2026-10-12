@@ -215,6 +215,8 @@ async function chatLocal(target: WebContents, id: string, req: AiRequest, signal
     send(target, id, { type: 'error', message: 'Choose a local model in Settings → AI assistant.' });
     return;
   }
+  const ollama = await ollamaRoot(baseUrlOf(req));
+  if (ollama) return chatOllama(target, id, req, ollama, signal);
   const tools = req.tools.map((t: AiToolDef) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
   let res: Response;
   try {
@@ -282,6 +284,153 @@ async function chatLocal(target: WebContents, id: string, req: AiRequest, signal
   const fromText = calls.size ? [] : rest.calls;
   fromText.forEach((c, i) => send(target, id, { type: 'tool_use', id: `call_text_${Date.now().toString(36)}_${i}`, name: c.name, input: c.input }));
   send(target, id, { type: 'done', stopReason: calls.size || fromText.length ? 'tool_use' : stopReason });
+}
+
+// ---------- Ollama (its own API) ----------
+// Ollama's OpenAI-style endpoint can't choose the context size, and Ollama's default (often 4,096
+// tokens) silently cuts off the start of Gridline's instructions. Its own /api/chat can (num_ctx).
+
+const ollamaServers = new Set<string>();
+
+/** The server's root address (http://localhost:11434) when it is Ollama, else null. */
+async function ollamaRoot(baseUrl: string): Promise<string | null> {
+  let root: string;
+  try {
+    root = new URL(baseUrl).origin;
+  } catch {
+    return null;
+  }
+  if (ollamaServers.has(root)) return root;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 1500);
+  try {
+    const res = await net.fetch(`${root}/api/version`, { signal: ctl.signal });
+    const j = res.ok ? ((await res.json()) as { version?: unknown }) : null;
+    if (typeof j?.version !== 'string') return null;
+    ollamaServers.add(root);
+    return root;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function toOllama(system: string, messages: AiMessage[]): unknown[] {
+  const out: unknown[] = [{ role: 'system', content: system }];
+  const names = new Map<string, string>();
+  for (const m of messages) {
+    const texts = m.content.filter((b): b is Extract<AiBlock, { type: 'text' }> => b.type === 'text').map((b) => b.text);
+    if (m.role === 'assistant') {
+      const calls = m.content
+        .filter((b): b is Extract<AiBlock, { type: 'tool_use' }> => b.type === 'tool_use')
+        .map((b) => {
+          names.set(b.id, b.name);
+          return { function: { name: b.name, arguments: b.input ?? {} } };
+        });
+      out.push({ role: 'assistant', content: texts.join('\n'), ...(calls.length ? { tool_calls: calls } : {}) });
+    } else {
+      for (const b of m.content) if (b.type === 'tool_result') out.push({ role: 'tool', content: b.content, tool_name: names.get(b.tool_use_id) ?? '' });
+      if (texts.length) out.push({ role: 'user', content: texts.join('\n') });
+    }
+  }
+  return out;
+}
+
+/** Reads a stream of JSON lines. */
+async function readJsonLines(res: Response, onLine: (j: Record<string, any>) => void): Promise<void> {
+  const reader = res.body!.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  const take = (line: string) => {
+    if (!line.trim()) return;
+    try {
+      onLine(JSON.parse(line));
+    } catch {
+      // not JSON
+    }
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i: number;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      take(buf.slice(0, i));
+      buf = buf.slice(i + 1);
+    }
+  }
+  take(buf);
+}
+
+async function chatOllama(target: WebContents, id: string, req: AiRequest, root: string, signal: AbortSignal): Promise<void> {
+  const numCtx = Math.max(2048, Math.min(262144, Math.round(req.contextSize ?? 16384)));
+  const tools = req.tools.map((t: AiToolDef) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+  const messages = toOllama(req.system, req.messages);
+  let res: Response;
+  try {
+    res = await net.fetch(`${root}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: req.model, messages, tools, stream: true, options: { num_ctx: numCtx, num_predict: req.maxTokens ?? 8192 } }),
+      signal,
+    });
+  } catch (e) {
+    if (signal.aborted) throw e;
+    send(target, id, { type: 'error', message: `Couldn't reach Ollama at ${root}. Is it running?` });
+    return;
+  }
+  if (!res.ok) {
+    send(target, id, { type: 'error', message: await errorText(res, 'local') });
+    return;
+  }
+  const textCalls = new ToolCallStream(req.tools);
+  const calls: { name: string; input: unknown }[] = [];
+  let stopReason = 'end_turn';
+  const usage = { input: 0, output: 0 };
+  let failed = false;
+  await readJsonLines(res, (j) => {
+    if (typeof j.error === 'string') {
+      failed = true;
+      send(target, id, { type: 'error', message: `Ollama: ${j.error}` });
+      return;
+    }
+    const msg = j.message ?? {};
+    if (typeof msg.content === 'string' && msg.content) {
+      const shown = textCalls.push(msg.content);
+      if (shown) send(target, id, { type: 'text', text: shown });
+    }
+    for (const tc of msg.tool_calls ?? []) {
+      const f = tc.function ?? {};
+      let input = f.arguments ?? {};
+      if (typeof input === 'string') {
+        try {
+          input = JSON.parse(input);
+        } catch {
+          input = {};
+        }
+      }
+      if (typeof f.name === 'string') calls.push({ name: f.name, input });
+    }
+    if (j.done) {
+      if (j.done_reason === 'length') stopReason = 'max_tokens';
+      usage.input = j.prompt_eval_count ?? 0;
+      usage.output = j.eval_count ?? 0;
+    }
+  });
+  if (failed) return;
+  const rest = textCalls.finish();
+  if (rest.text) send(target, id, { type: 'text', text: rest.text });
+  const all = calls.length ? calls : rest.calls;
+  const stamp = Date.now().toString(36);
+  all.forEach((c, i) => send(target, id, { type: 'tool_use', id: `call_${stamp}_${i}`, name: c.name, input: c.input }));
+  // Ollama cuts long prompts without saying so; estimate the size (about 3.5 characters a token)
+  const chars = JSON.stringify(messages).length + JSON.stringify(tools).length;
+  const warning =
+    chars / 3.5 > numCtx * 0.95
+      ? `This chat is getting longer than the model can read at once (${numCtx.toLocaleString('en-US')} tokens), so the oldest parts may be cut off. Start a new chat, or raise Context size in Settings → AI assistant.`
+      : undefined;
+  send(target, id, { type: 'done', stopReason: all.length ? 'tool_use' : stopReason, usage, warning });
 }
 
 // ---------- IPC ----------

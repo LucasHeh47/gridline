@@ -10,17 +10,18 @@ export interface TextToolCall {
   input: Record<string, unknown>;
 }
 
-const MARKER = /<tool_call>|<function=|<\|python_tag\|>|```|\{\s*"name"\s*:/;
+const STRAY = /<\/?tool_call>|<\/function>|<\|python_tag\|>|<\|eom_id\|>|<\|eot_id\|>/g;
+const MARKER = /<tool_call>|<function=|<\|python_tag\|>|<\/?workbook>|```|\{\s*"(?:name|op)"\s*:|\[\s*\{\s*"op"\s*:/;
 const THINK_OPEN = '<think>';
 const THINK_CLOSE = '</think>';
-const PREFIXES = ['<tool_call>', '<function=', '<|python_tag|>', '```', THINK_OPEN, THINK_CLOSE];
+const PREFIXES = ['<tool_call>', '<function=', '<|python_tag|>', '<workbook>', '</workbook>', '```', THINK_OPEN, THINK_CLOSE];
 
 /** Index from which the end of `s` might be the start of a marker split across chunks, or -1. */
 function partialStart(s: string): number {
   for (let i = Math.max(0, s.length - 16); i < s.length; i++) {
     const rest = s.slice(i);
     if (PREFIXES.some((p) => p.startsWith(rest))) return i;
-    if (/^\{\s*(?:"[a-z]{0,4}"?\s*)?$/.test(rest)) return i;
+    if (/^\[?\s*\{\s*(?:"[a-z]{0,4}"?\s*)?$/.test(rest)) return i;
   }
   return -1;
 }
@@ -176,15 +177,30 @@ function coerce(raw: string, schema: Schema | undefined): unknown {
   return v;
 }
 
-/** A call written as JSON: {"name": …, "arguments"|"parameters"|"input": …} or {"function": {…}}. */
-function fromJson(value: unknown, names: Set<string>): TextToolCall[] | null {
+/** The kinds of change propose_changes accepts (set_values, fill_formula…). */
+function changeOps(tools: AiToolDef[]): Set<string> {
+  const schema = tools.find((t) => t.name === 'propose_changes')?.input_schema as { properties?: { changes?: { items?: { properties?: { op?: { enum?: string[] } } } } } } | undefined;
+  return new Set(schema?.properties?.changes?.items?.properties?.op?.enum ?? []);
+}
+
+/**
+ * A call written as JSON: {"name": …, "arguments"|"parameters"|"input": …} or {"function": {…}}.
+ * Small models also write the changes themselves ({"op": "set_values", …}): those become a
+ * propose_changes call.
+ */
+function fromJson(value: unknown, names: Set<string>, ops: Set<string>): TextToolCall[] | null {
   const list = Array.isArray(value) ? value : [value];
+  if (ops.size && list.length && list.every((x) => x && typeof x === 'object' && ops.has(String((x as { op?: unknown }).op)))) {
+    return [{ name: 'propose_changes', input: { title: 'Changes', summary: '', changes: list } }];
+  }
   const out: TextToolCall[] = [];
   for (const item of list) {
     if (!item || typeof item !== 'object') return null;
     const o = (item as { function?: unknown }).function && typeof (item as { function: unknown }).function === 'object' ? ((item as { function: object }).function as Record<string, unknown>) : (item as Record<string, unknown>);
     const name = typeof o.name === 'string' ? o.name : null;
-    if (!name || !names.has(name)) return null;
+    // A known tool, or a spreadsheet function written like one (NFL.LEADERS): the app explains
+    // to the model how to use it instead of showing the JSON to the user
+    if (!name || (!names.has(name) && !/^[A-Z][A-Z0-9]*(?:\.[A-Z0-9]+)+$/.test(name))) return null;
     let args = o.arguments ?? o.parameters ?? o.input ?? {};
     if (typeof args === 'string') {
       try {
@@ -200,8 +216,11 @@ function fromJson(value: unknown, names: Set<string>): TextToolCall[] | null {
 }
 
 /** Finds tool calls written as text. Returns the text without them, and the calls in order. */
-export function parseToolCalls(text: string, tools: AiToolDef[]): { text: string; calls: TextToolCall[] } {
+export function parseToolCalls(input: string, tools: AiToolDef[]): { text: string; calls: TextToolCall[] } {
+  // Small models sometimes repeat the workbook overview they were given: never show it
+  const text = input.replace(/<workbook>[\s\S]*?(?:<\/workbook>|$)/g, '').replace(/<\/workbook>/g, '');
   const names = new Set(tools.map((t) => t.name));
+  const ops = changeOps(tools);
   const schemas = new Map(tools.map((t) => [t.name, t.input_schema as Schema]));
   const spans: { start: number; end: number; calls: TextToolCall[] }[] = [];
   const free = (a: number, b: number) => !spans.some((s) => a < s.end && b > s.start);
@@ -224,13 +243,14 @@ export function parseToolCalls(text: string, tools: AiToolDef[]): { text: string
     { re: /<\|python_tag\|>/g, close: /^\s*(?:<\|eom_id\|>|<\|eot_id\|>)?/ },
     { re: /```(?:json|tool_call|tool)?[ \t]*\r?\n?/g, close: /^\s*```/ },
     { re: /(?=\{\s*"name"\s*:)/g },
+    { re: /(?=\[?\s*\{\s*"op"\s*:)/g },
   ];
   for (const { re, close } of starts) {
     for (const m of text.matchAll(re)) {
       const at = m.index! + m[0].length;
       const j = readJson(text, at);
       if (!j) continue;
-      const calls = fromJson(j.value, names);
+      const calls = fromJson(j.value, names, ops);
       if (!calls) continue;
       let end = j.end;
       if (close) {
@@ -242,7 +262,8 @@ export function parseToolCalls(text: string, tools: AiToolDef[]): { text: string
     }
   }
 
-  if (!spans.length) return { text, calls: [] };
+  // Leftover call markers (a model that starts a call, then stops) are never meant to be read
+  if (!spans.length) return { text: text === input ? text.replace(STRAY, '') : text.replace(STRAY, '').replace(/\n{3,}/g, '\n\n').trim(), calls: [] };
   spans.sort((a, b) => a.start - b.start);
   let rest = '';
   let last = 0;
@@ -251,6 +272,6 @@ export function parseToolCalls(text: string, tools: AiToolDef[]): { text: string
     last = s.end;
   }
   rest += text.slice(last);
-  rest = rest.replace(/<\/?tool_call>|<\|python_tag\|>|<\|eom_id\|>|<\|eot_id\|>/g, '').replace(/\n{3,}/g, '\n\n').trim();
+  rest = rest.replace(STRAY, '').replace(/\n{3,}/g, '\n\n').trim();
   return { text: rest, calls: spans.flatMap((s) => s.calls) };
 }

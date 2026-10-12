@@ -32,7 +32,7 @@
   - **Sports:** NFL player and team stats, schedules, standings and leaders, back to 1999.
   - **World:** weather and forecasts, public holidays, country statistics.
 - **Macros.** Run and write VBA macros like in Excel, and open and save macro-enabled `.xlsm` files. Put a macro on a button, a keyboard shortcut, or run it when the file opens or cells change. A no-code **step builder** (Beta) lets anyone make a macro from plain-English steps. See **[Macros in Gridline](docs/macros.md)**.
-- **AI assistant (Beta).** Ask about your workbook in plain English. It reads what it needs across sheets, formulas and charts, and proposes changes you review cell by cell before anything is modified. Every change undoes in one click. Use Claude with your own API key, or a local model with Ollama or LM Studio. See **[AI assistant](docs/ai-assistant.md)**.
+- **AI assistant (Beta).** Ask about your workbook in plain English. It reads what it needs across sheets, formulas and charts, uses live data instead of making numbers up, and shows every change cell by cell right on the sheet. Every change undoes in one click. Use Claude with your own API key, or a local model with Ollama or LM Studio. See **[AI assistant](docs/ai-assistant.md)**.
 - **10 ready-made presets.** Monthly budget, loan calculator, debt payoff, net worth, stock portfolio, crypto portfolio, NFL team tracker, fantasy football, trip planner and project tracker.
 - **125 settings.** Theme, accent color, ribbon size, what Enter does, date format, AutoSave, CSV options and more.
 

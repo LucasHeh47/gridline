@@ -233,7 +233,7 @@ Ask questions about the workbook, or ask for changes in plain English: "find dup
 - **Home → Ask AI** (or **Ctrl+Shift+A**) opens the assistant. It's available on the Developer branch in the desktop app.
 - It uses Claude with your own API key, or a model on your computer (Ollama or LM Studio).
 - It reads whatever it needs, across sheets, formulas and charts. Every read is listed in the chat.
-- Changes come as proposals that show every cell before → after, plus results elsewhere that would change. Nothing changes until you click **Apply**, and **Undo** on the card reverses it in one click.
+- Changes go straight into the sheet so you can see them, with a card listing every cell before → after (plus results elsewhere that change), a one-click **Undo**, and **Advanced format** to style the new cells. To approve each change first instead, turn on **Ask before changing the workbook** in Settings → AI assistant.
 
 ## 13. Settings
 

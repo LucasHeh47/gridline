@@ -76,6 +76,29 @@ describe('tool calls written as text by local models', () => {
     expect(parseToolCalls('<function=delete_everything></function>', TOOLS).calls).toEqual([]);
   });
 
+  it('drops a leftover call marker at the end of a reply', () => {
+    expect(stream('If you need anything else, let me know!<tool_call>').shown).toBe('If you need anything else, let me know!');
+  });
+
+  it("catches a spreadsheet function written like a tool call (small models do this)", () => {
+    const r = parseToolCalls('{"name": "NFL.PLAYERINFO", "parameters": {"player": "NFL.LEADERS", "stat": "Passer Rating"}}', TOOLS);
+    expect(r.calls).toEqual([{ name: 'NFL.PLAYERINFO', input: { player: 'NFL.LEADERS', stat: 'Passer Rating' } }]);
+    expect(r.text).toBe('');
+  });
+
+  it('turns changes written straight into the reply into a real change (small models do this)', () => {
+    // What llama3.2:3b replied
+    const llama = 'Let\'s use the NFL.LEADERS function.\n\n{"op": "set_values", "start": "A1", "values": [["=NFL.LEADERS(\\"Passing Yards\\", 2026, 15, \\"QB\\")"]]}';
+    const r = stream(llama);
+    expect(r.shown).toBe("Let's use the NFL.LEADERS function.\n\n");
+    expect(r.calls).toEqual([{ name: 'propose_changes', input: { title: 'Changes', summary: '', changes: [{ op: 'set_values', start: 'A1', values: [['=NFL.LEADERS("Passing Yards", 2026, 15, "QB")']] }] } }]);
+    const list = parseToolCalls('[{"op": "add_sheet", "name": "QBs"}, {"op": "freeze", "rows": 1}]', TOOLS);
+    expect(list.calls).toHaveLength(1);
+    expect((list.calls[0].input.changes as unknown[]).length).toBe(2);
+    // Objects that aren't changes stay as text
+    expect(parseToolCalls('{"op": "plus", "a": 1}', TOOLS).calls).toEqual([]);
+  });
+
   it('hides <think> reasoning', () => {
     const r = stream('<think>\nThe user wants totals. I should evaluate.\n</think>\n\nThe total is 42.');
     expect(r.shown).toBe('The total is 42.');

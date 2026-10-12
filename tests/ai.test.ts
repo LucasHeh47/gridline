@@ -125,6 +125,16 @@ describe('AI assistant: previews, applying and undo', () => {
     expect(val(doc, 'H1')).toBe('note');
   });
 
+  it('undo still removes what the AI wrote after the cells were reformatted', () => {
+    const doc = ledger();
+    const tx = applyChanges(doc, 'Add a Category column', addCategory);
+    // e.g. Advanced format afterwards: style only
+    doc.transact('Bold', (t) => t.patchCell(doc.wb.activeSheet, 1, 5, { s: 3 }));
+    expect(revertChanges(doc, tx)).toMatchObject({ skipped: 0 });
+    expect(val(doc, 'F2')).toBe(null);
+    expect(doc.wb.activeSheet.getCell(1, 5)?.s).toBe(3);
+  });
+
   it('shows new rows as empty before', () => {
     const doc = ledger();
     const p = previewChanges(doc, [
@@ -134,6 +144,30 @@ describe('AI assistant: previews, applying and undo', () => {
     expect(p.structural).toBe(true);
     expect(p.edits.filter((e) => e.cell.endsWith('3')).map((e) => e.before)).toEqual(['', '', '', '']);
     expect(val(doc, 'B3')).toBe('Bagel');
+  });
+
+  it('puts a table formula in one cell instead of filling it down', () => {
+    const doc = makeDoc();
+    const p = previewChanges(doc, [{ op: 'fill_formula', range: 'A1:C10', formula: '=SEQUENCE(4,3)' }]);
+    expect(p.notes[0]).toBe('Puts =SEQUENCE(4,3) in Sheet1!A1 only: it returns a table (4 rows × 3 columns) that fills the cells below and to the right by itself.');
+    expect(p.editCount).toBe(1);
+    expect(p.errorCount).toBe(0);
+    // An ordinary formula still fills every cell
+    expect(previewChanges(doc, [{ op: 'fill_formula', range: 'A1:A3', formula: '=ROW()*2' }]).editCount).toBe(3);
+  });
+
+  it('accepts common variations in how models write changes, and explains what is missing', () => {
+    const doc = makeDoc();
+    const loose = [
+      { op: 'set_values', cell: 'A1', value: 'Total' },
+      { op: 'set_values', range: 'B1:D1', values: ['x', 'y', 'z'] },
+      { op: 'fill_formula', start: 'E1', value: '=1+1' },
+    ] as unknown as Change[];
+    const p = previewChanges(doc, loose);
+    expect(p.error).toBeUndefined();
+    expect(p.edits.map((e) => `${e.cell}=${e.after}`)).toEqual(['A1=Total', 'B1=x', 'C1=y', 'D1=z', 'E1=2']);
+    expect(previewChanges(doc, [{ op: 'fill_formula', range: 'A1:A5' } as unknown as Change]).error).toBe('A fill_formula change needs "formula".');
+    expect(previewChanges(doc, [{ op: 'paint', range: 'A1' } as unknown as Change]).error).toMatch(/^Unknown change "paint"/);
   });
 
   it('adds highlights, charts, sheets and dropdowns', () => {
@@ -256,6 +290,74 @@ describe('AI assistant: the conversation loop', () => {
     expect(last.role).toBe('user');
     expect(last.content.map((b) => (b as { tool_use_id: string }).tool_use_id)).toEqual(['t1', 't2']);
     expect(val(doc, 'F1')).toBe(null);
+  });
+
+  it('steers models away from typing in stats from memory (once per message)', async () => {
+    const doc = makeDoc();
+    const rows = [['Rank', 'Player', 'Yards'], ...Array.from({ length: 15 }, (_, i) => [i + 1, `QB ${i + 1}`, 4900 - i * 120])];
+    const invent = { title: 'QB table', summary: '', changes: [{ op: 'set_values', start: 'A1', values: rows }] };
+    const live = { title: 'QB table', summary: '', changes: JSON.stringify([{ op: 'set_values', start: 'A1', values: [['=NFL.LEADERS("Passing Yards", 2025, 15, "QB")']] }]) };
+    const t = scripted([
+      [{ type: 'tool_use', id: 't1', name: 'propose_changes', input: invent }, { type: 'done', stopReason: 'tool_use' }],
+      [{ type: 'tool_use', id: 't2', name: 'propose_changes', input: live }, { type: 'done', stopReason: 'tool_use' }],
+      [{ type: 'text', text: 'Done.' }, { type: 'done', stopReason: 'end_turn' }],
+    ]);
+    const { h, log } = hooks(doc, () => ({ status: 'applied', label: 'AI: QB table', auto: true }));
+    await new Conversation(doc, t, h).send('create a table showing the top 15 quarterbacks this season', { ...opts, autoApply: true }, new AbortController().signal);
+    const nudge = t.requests[1].messages[2].content[0] as { content: string; is_error?: boolean };
+    expect(nudge.is_error).toBe(true);
+    expect(nudge.content).toContain('=NFL.LEADERS(');
+    expect(log.reads).toEqual(['Asked the AI to use live data instead of numbers typed from memory']);
+    // The live-data version (sent as a JSON string) goes through
+    expect(log.proposals).toHaveLength(1);
+    expect(log.proposals[0].changes[0]).toMatchObject({ op: 'set_values', start: 'A1' });
+    const applied = (t.requests[2].messages[4].content[0] as { content: string }).content;
+    expect(applied).toMatch(/^Applied\. [\s\S]*the user can see and undo them[\s\S]*describe only these\./);
+    expect(applied).toContain('The changed cells now show');
+    expect(t.requests[0].system).toContain('Changes are applied as soon as you call propose_changes');
+  });
+
+  it("doesn't flag numbers the user gave, or topics without live data", async () => {
+    const doc = makeDoc();
+    const values = [['Item', 'Cost'], ['Rent', 1500], ['Food', 600], ['Gas', 180], ['Phone', 70], ['Gym', 40], ['Net', 65], ['Car', 320], ['Misc', 100]];
+    for (const msg of ['make a budget: rent 1500, food 600, gas 180, phone 70, gym 40, net 65, car 320, misc 100', 'make me a sample monthly budget']) {
+      const t = scripted([
+        [{ type: 'tool_use', id: 't1', name: 'propose_changes', input: { title: 'Budget', summary: '', changes: [{ op: 'set_values', start: 'A1', values }] } }, { type: 'done', stopReason: 'tool_use' }],
+        [{ type: 'text', text: 'Done.' }, { type: 'done', stopReason: 'end_turn' }],
+      ]);
+      const { h, log } = hooks(doc, () => ({ status: 'rejected' }));
+      await new Conversation(doc, t, h).send(msg, opts, new AbortController().signal);
+      expect(log.proposals).toHaveLength(1);
+    }
+  });
+
+  it("doesn't apply formulas that would break, and says why", async () => {
+    const doc = makeDoc({ B2: 'in the way' });
+    const spill = { title: 'Table', summary: '', changes: [{ op: 'set_values', start: 'A2', values: [['=SEQUENCE(3,3)']] }] };
+    const t = scripted([
+      [{ type: 'tool_use', id: 't1', name: 'propose_changes', input: spill }, { type: 'done', stopReason: 'tool_use' }],
+      [{ type: 'tool_use', id: 't2', name: 'propose_changes', input: { ...spill, changes: [{ op: 'set_values', start: 'D2', values: [['=SEQUENCE(3,3)']] }] } }, { type: 'done', stopReason: 'tool_use' }],
+      [{ type: 'text', text: 'Done.' }, { type: 'done', stopReason: 'end_turn' }],
+    ]);
+    const { h, log } = hooks(doc, (p) => {
+      applyChanges(doc, p.title, p.changes);
+      return { status: 'applied', label: 'AI: Table', auto: true };
+    });
+    await new Conversation(doc, t, h).send('make a 3x3 table', { ...opts, autoApply: true }, new AbortController().signal);
+    const refused = t.requests[1].messages[2].content[0] as { content: string; is_error?: boolean };
+    expect(refused.is_error).toBe(true);
+    expect(refused.content).toMatch(/^Not applied: 1 of the formulas you wrote would show errors: Sheet1!A2 #SPILL!/);
+    expect(log.reads[0]).toBe('"Table" would show 1 formula error; asked the AI to fix it first');
+    expect(val(doc, 'A2')).toBe(null);
+    // The fixed version is applied, and the model sees what the cells show
+    expect(val(doc, 'F4')).toBe(9);
+    expect((t.requests[2].messages[4].content[0] as { content: string }).content).toContain('Sheet1!D2:F4');
+  });
+
+  it('a spreadsheet function called like a tool gets an explanation', () => {
+    const r = runReadTool(makeDoc(), 'NFL.PLAYERINFO', { player: 'x' }, 100);
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain('NFL.PLAYERINFO is a spreadsheet function, not one of your tools');
   });
 
   it('model errors surface as exceptions', async () => {

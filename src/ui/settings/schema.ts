@@ -209,6 +209,8 @@ export const SETTINGS: SettingDef[] = [
     const pick = await dialog<string | null>('Choose a model', 'Models available on your local AI server:', [...r.models.slice(0, 12).map((m) => ({ label: m, value: m as string | null })), { label: 'Cancel', value: null }]);
     if (pick) app.settings.set('ai.localModel', pick);
   } } },
+  { id: 'ai.confirm', section: 'ai', group: 'Changes', label: 'Ask before changing the workbook', description: 'Off: changes go straight into the sheet so you can look at them, with a list of every changed cell and a one-click Undo. On: each change waits for you to click Apply.', type: 'toggle', default: false, keywords: 'approve apply preview confirm auto' },
+  { id: 'ai.contextSize', section: 'ai', group: 'Local model', label: 'Context size', description: "How much the model can read at once. Gridline's instructions alone need about 5,000 tokens, so smaller sizes cut them off. Larger sizes use more memory (Ollama only; for LM Studio, set it when loading the model).", type: 'select', default: '16384', options: opts(['8192', '8,192 tokens'], ['16384', '16,384 tokens (recommended)'], ['32768', '32,768 tokens'], ['65536', '65,536 tokens']), keywords: 'num_ctx context window memory tokens ollama' },
   { id: 'ai.maxCells', section: 'ai', group: 'Reading', label: 'Most cells per read', description: 'How many cells the assistant can read at once. More gives it more to work with but uses more tokens; for totals it calculates with formulas instead of reading everything.', type: 'number', default: 2000, min: 100, max: 20000, step: 100, unit: 'cells', keywords: 'context tokens limit privacy' },
 
   // ---------- Macros ----------

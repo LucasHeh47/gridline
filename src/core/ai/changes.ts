@@ -13,6 +13,8 @@ import { addSheet, renameSheet } from '../ops/sheets';
 import { restructure, setColumnWidth } from '../ops/structure';
 import type { StylePatch } from '../styles';
 import { newValidationId } from '../validation';
+import { ErrorValue } from '../values';
+import { Matrix } from '../formula/types';
 import { validateSheetName, type Cell, type CFRuleSpec, type CFStyle, type ChartType, type Sheet } from '../workbook';
 
 export type CellInput = string | number | boolean | null;
@@ -117,8 +119,89 @@ function where(sheet: Sheet, r: Range | string): string {
 // ---------- applying ----------
 
 /** Applies one change inside a transaction. Returns a plain-English note for the preview. */
-export function applyChange(tx: Transaction, doc: Doc, c: Change, home: Sheet = doc.wb.activeSheet): string {
+/** Fields each kind of change needs. */
+const REQUIRED: Record<string, string[]> = {
+  set_values: ['start', 'values'],
+  fill_formula: ['range', 'formula'],
+  clear: ['range'],
+  insert_rows: ['before_row'],
+  delete_rows: ['row'],
+  insert_columns: ['before_column'],
+  delete_columns: ['column'],
+  add_sheet: ['name'],
+  rename_sheet: ['sheet', 'name'],
+  format: ['range'],
+  column_width: ['columns', 'width'],
+  add_chart: ['type', 'data'],
+  highlight: ['range', 'rule'],
+  sort: ['range', 'by'],
+  filter: ['range'],
+  freeze: ['rows'],
+  add_note: ['cell', 'text'],
+  dropdown: ['range', 'choices'],
+};
+
+/**
+ * Accepts the field names models commonly use instead of ours (value for values, cell for start…),
+ * and explains clearly what's missing instead of failing on it.
+ */
+export function normalizeChange(input: Change): Change {
+  const c = { ...(input as unknown as Record<string, unknown>) };
+  const first = (...keys: string[]) => keys.map((k) => c[k]).find((v) => v !== undefined && v !== null && v !== '');
+  const firstCell = (v: unknown) => (typeof v === 'string' ? v.split(':')[0] : v);
+  switch (c.op) {
+    case 'set_values': {
+      c.start ??= firstCell(first('cell', 'range', 'at'));
+      if (c.values === undefined) {
+        const v = first('value', 'formula', 'data');
+        if (v !== undefined) c.values = Array.isArray(v) ? v : [[v]];
+      }
+      // One row written as a flat list
+      if (Array.isArray(c.values) && c.values.length && !c.values.some(Array.isArray)) c.values = [c.values];
+      break;
+    }
+    case 'fill_formula':
+      c.range ??= first('cells', 'start', 'cell');
+      c.formula ??= first('value', 'formulas');
+      if (Array.isArray(c.formula)) c.formula = c.formula.flat()[0];
+      break;
+    case 'add_sheet':
+      c.name ??= first('sheet', 'title');
+      break;
+    case 'column_width':
+      c.columns ??= first('column', 'range');
+      c.width ??= 'auto';
+      break;
+    case 'add_note':
+      c.cell ??= first('start', 'range');
+      c.text ??= first('note', 'value');
+      break;
+    case 'freeze':
+      c.rows ??= 0;
+      break;
+    case 'dropdown':
+      c.choices ??= first('values', 'items', 'options');
+      break;
+    case 'add_chart':
+      c.data ??= first('range', 'source');
+      c.type ??= 'column';
+      break;
+    default:
+      c.range ??= first('cell', 'cells', 'start');
+  }
+  const op = String(c.op);
+  if (!(op in REQUIRED)) throw new ChangeError(`Unknown change "${op}". Use one of: ${Object.keys(REQUIRED).join(', ')}.`);
+  const missing = REQUIRED[op].filter((k) => c[k] === undefined || c[k] === null || c[k] === '');
+  if (missing.length) throw new ChangeError(`A ${op} change needs ${missing.map((k) => `"${k}"`).join(' and ')}.`);
+  for (const k of ['start', 'range', 'cell', 'formula', 'name', 'sheet', 'columns', 'data', 'before_column', 'column']) {
+    if (c[k] !== undefined && typeof c[k] !== 'string') c[k] = String(c[k]);
+  }
+  return c as unknown as Change;
+}
+
+export function applyChange(tx: Transaction, doc: Doc, input: Change, home: Sheet = doc.wb.activeSheet): string {
   const wb = doc.wb;
+  const c = normalizeChange(input);
   switch (c.op) {
     case 'set_values': {
       const { sheet, range } = rangeOf(doc, home, c.sheet, c.start);
@@ -134,6 +217,8 @@ export function applyChange(tx: Transaction, doc: Doc, c: Change, home: Sheet = 
           if (v === null || v === undefined || v === '') {
             const cur = sheet.getCell(r, k);
             if (cur && (cur.v !== undefined || cur.f !== undefined)) tx.patchCell(sheet, r, k, { v: undefined, f: undefined, cached: undefined });
+          } else if (typeof v === 'object') {
+            throw new ChangeError('Each value in set_values must be text, a number, true/false or null (one value per cell).');
           } else if (typeof v === 'number' || typeof v === 'boolean') {
             if (typeof v === 'number' && !Number.isFinite(v)) throw new ChangeError('A value is not a finite number.');
             tx.patchCell(sheet, r, k, { v, f: undefined, cached: undefined });
@@ -147,6 +232,15 @@ export function applyChange(tx: Transaction, doc: Doc, c: Change, home: Sheet = 
       const r = usedPart(doc, sheet, range);
       if (size(r) > MAX_WRITE) throw new ChangeError('That range is too large to fill in one step.');
       const f = c.formula.trim().startsWith('=') ? c.formula.trim() : '=' + c.formula.trim();
+      // A formula that returns a whole table (NFL.LEADERS, FILTER…) belongs in one cell: filled
+      // into every cell, each copy would block the others (#SPILL!)
+      if (size(r) > 1) {
+        const v = doc.engine.evalText(f.slice(1), sheet, r.r1, r.c1);
+        if (v instanceof Matrix && v.rows * v.cols > 1) {
+          setCellInput(tx, doc, sheet, r.r1, r.c1, f);
+          return `Puts ${f} in ${where(sheet, formatCell(r.r1, r.c1))} only: it returns a table (${v.rows} rows × ${v.cols} columns) that fills the cells below and to the right by itself.`;
+        }
+      }
       fillSelectionWithInput(tx, doc, sheet, [r], r.r1, r.c1, f);
       return `Fills ${where(sheet, r)} with ${f}${size(r) > 1 ? ' (adjusted for each cell)' : ''}.`;
     }
@@ -386,6 +480,9 @@ export interface Preview {
   /** Formula results elsewhere that change because of the edits. */
   recalcs: CellDiff[];
   recalcCount: number;
+  /** Formulas the change writes that would show an error (#SPILL!, #NAME?, #REF!…). */
+  errors: { sheet: string; cell: string; code: string; message?: string }[];
+  errorCount: number;
   /** Rows or columns move, so formula results elsewhere aren't compared. */
   structural: boolean;
   /** Set when the proposal couldn't be applied (nothing changes). */
@@ -393,6 +490,7 @@ export interface Preview {
 }
 
 const SHOW = 400;
+const FORMULA_MISTAKES = new Set(['#SPILL!', '#NAME?', '#REF!', '#VALUE!', '#CALC!', '#CIRC!', '#NULL!']);
 
 function formulaCells(doc: Doc): Map<string, { sheet: Sheet; key: number }> {
   const out = new Map<string, { sheet: Sheet; key: number }>();
@@ -427,6 +525,8 @@ export function previewChanges(doc: Doc, changes: Change[]): Preview {
         const edits: CellDiff[] = [];
         let editCount = 0;
         let formatCount = 0;
+        const errors: Preview['errors'] = [];
+        let errorCount = 0;
         const edited = new Set<string>();
         for (const ch of tx.changes) {
           if (ch.k !== 'cell') continue;
@@ -442,6 +542,15 @@ export function previewChanges(doc: Doc, changes: Change[]): Preview {
             continue;
           }
           editCount++;
+          if (a?.f !== undefined) {
+            const v = doc.engine.getValue(ch.sheet, keyRow(ch.key), keyCol(ch.key));
+            // Only errors that mean the formula itself is wrong (not #N/A from a lookup, #DIV/0! from
+            // missing data, or live data still loading or offline)
+            if (v instanceof ErrorValue && FORMULA_MISTAKES.has(v.code)) {
+              errorCount++;
+              if (errors.length < 12) errors.push({ sheet: ch.sheet.name, cell: formatCell(keyRow(ch.key), keyCol(ch.key)), code: v.code, message: v.message });
+            }
+          }
           const sp = a?.f !== undefined ? doc.engine.spillAt(ch.sheet, keyRow(ch.key), keyCol(ch.key)) : null;
           const spill = sp && (sp.r2 > sp.r1 || sp.c2 > sp.c1) ? formatRange(sp) : undefined;
           if (spill) notes.push(`${ch.sheet.name}!${formatCell(keyRow(ch.key), keyCol(ch.key))} fills ${ch.sheet.name}!${spill} with a table (${sp!.r2 - sp!.r1 + 1} rows × ${sp!.c2 - sp!.c1 + 1} columns).`);
@@ -468,11 +577,11 @@ export function previewChanges(doc: Doc, changes: Change[]): Preview {
             if (recalcs.length < SHOW) recalcs.push({ sheet: sheet.name, cell: formatCell(keyRow(key), keyCol(key)), before: before.get(id)!, after: now });
           }
         }
-        return { notes: [...notes], edits, editCount, formatCount, recalcs, recalcCount, structural };
+        return { notes: [...notes], edits, editCount, formatCount, recalcs, recalcCount, errors, errorCount, structural };
       },
     );
   } catch (e) {
-    return { notes: [], edits: [], editCount: 0, formatCount: 0, recalcs: [], recalcCount: 0, structural: false, error: (e as Error).message || String(e) };
+    return { notes: [], edits: [], editCount: 0, formatCount: 0, recalcs: [], recalcCount: 0, errors: [], errorCount: 0, structural: false, error: (e as Error).message || String(e) };
   }
   // How edited cells looked before (now that the trial has been reverted). When rows or columns
   // moved, addresses no longer line up with the original layout, so keep the raw values instead.

@@ -2,7 +2,7 @@
 // are logged in the chat; proposals wait for Apply or Reject; applied changes keep an Undo button.
 import { AgentError, Conversation, type AgentOptions, type AiTransport, type Proposal, type ProposalOutcome } from '../../core/ai/agent';
 import { applyChanges, previewChanges, previewLoading, revertChanges } from '../../core/ai/changes';
-import { formatRange, parseRange } from '../../core/address';
+import { formatRange, parseRange, type Range } from '../../core/address';
 import { external } from '../../core/data/external';
 import { displayText } from '../../core/ops/data';
 import { workbookOverview } from '../../core/ai/workbook';
@@ -19,7 +19,8 @@ export type ChatItem =
   | { kind: 'assistant'; text: string }
   | { kind: 'reads'; lines: { text: string; error: boolean }[] }
   | ProposalItem
-  | { kind: 'error'; text: string; action?: 'key' | 'settings' };
+  | { kind: 'error'; text: string; action?: 'key' | 'settings' }
+  | { kind: 'notice'; text: string; action?: 'settings' };
 
 export interface ProposalItem {
   kind: 'proposal';
@@ -29,6 +30,8 @@ export interface ProposalItem {
   wb: Workbook;
   note?: string;
   resolve?: (o: ProposalOutcome) => void;
+  /** Undone since the model last heard from the user (told with the next message). */
+  undoneUnreported?: boolean;
 }
 
 export const CLAUDE_MODELS: [string, string][] = [
@@ -123,12 +126,21 @@ export class AiController {
           const item: ProposalItem = { kind: 'proposal', p, state: 'pending', wb: this.app.doc.wb, resolve };
           signal.addEventListener('abort', () => this.settle(item, 'stopped', { status: 'stopped' }));
           this.push(item);
+          if (this.autoApply) this.apply(item, true);
         }),
+      onNotice: (text) => {
+        if (live()) this.push({ kind: 'notice', text, action: 'settings' });
+      },
       overview: () => {
         const app = this.app;
         return workbookOverview(app.doc, { sheet: app.sheet, ranges: app.sel.ranges, active: app.sel.active });
       },
     });
+  }
+
+  /** Changes go straight into the sheet (with Undo) unless the user chose to approve them first. */
+  get autoApply(): boolean {
+    return !this.app.settings.bool('ai.confirm');
   }
 
   /** Still in development: on the Developer branch and in dev builds, desktop app only. */
@@ -164,9 +176,10 @@ export class AiController {
 
   private options(): AgentOptions {
     const s = this.app.settings;
+    const autoApply = this.autoApply;
     return this.provider === 'local'
-      ? { provider: 'local', model: s.str('ai.localModel'), baseUrl: s.str('ai.localUrl'), maxCells: s.num('ai.maxCells') }
-      : { provider: 'claude', model: s.str('ai.model'), maxCells: s.num('ai.maxCells') };
+      ? { provider: 'local', model: s.str('ai.localModel'), baseUrl: s.str('ai.localUrl'), contextSize: Number(s.str('ai.contextSize')) || 16384, maxCells: s.num('ai.maxCells'), autoApply }
+      : { provider: 'claude', model: s.str('ai.model'), maxCells: s.num('ai.maxCells'), autoApply };
   }
 
   async send(text: string): Promise<void> {
@@ -177,14 +190,19 @@ export class AiController {
       return;
     }
     if (this.app.doc.wb !== this.wb) this.newChat();
+    this.smallModelTip();
     const gen = this.gen;
     this.running = true;
     this.current = null;
     this.push({ kind: 'user', text });
     const ctl = new AbortController();
     this.ctl = ctl;
+    // The model only learns about Undo clicks from us
+    const undone = this.items.filter((i): i is ProposalItem => i.kind === 'proposal' && !!i.undoneUnreported && i.state === 'undone');
+    for (const i of undone) i.undoneUnreported = false;
+    const prefix = undone.length ? `(Since your last reply I undid: ${undone.map((i) => `"${i.p.title}"`).join(', ')}. Those changes are no longer in the workbook.)\n\n` : '';
     try {
-      await this.conv.send(text, this.options(), ctl.signal);
+      await this.conv.send(prefix + text, this.options(), ctl.signal);
     } catch (e) {
       const msg = e instanceof AgentError ? e.message : `Something went wrong: ${(e as Error).message || String(e)}`;
       if (gen === this.gen) this.push({ kind: 'error', text: msg, action: /API key/i.test(msg.split(HIDDEN).join('')) ? 'key' : /Settings/.test(msg) ? 'settings' : undefined });
@@ -197,6 +215,18 @@ export class AiController {
         this.onChange?.();
       }
     }
+  }
+
+  private tipped = new Set<string>();
+
+  /** Models under about 7B parameters rarely manage spreadsheet tools; say so once per model. */
+  private smallModelTip(): void {
+    if (this.provider !== 'local') return;
+    const model = this.app.settings.str('ai.localModel');
+    const m = /(?:^|[:\-_ ])(\d+(?:\.\d+)?)b\b/i.exec(model);
+    if (!m || Number(m[1]) >= 7 || this.tipped.has(model)) return;
+    this.tipped.add(model);
+    this.push({ kind: 'notice', text: `${model} is a small model. Models under about 7B often can't work with a spreadsheet reliably — they may answer with code or invented numbers instead of changing the sheet. For better results, try a larger model such as qwen3:8b or qwen3-coder:30b.`, action: 'settings' });
   }
 
   stop(): void {
@@ -230,7 +260,7 @@ export class AiController {
     this.onChange?.(item);
   }
 
-  apply(item: ProposalItem): void {
+  apply(item: ProposalItem, auto = false): void {
     if (item.state !== 'pending') return;
     const doc = this.app.doc;
     if (doc.wb !== item.wb) {
@@ -241,13 +271,43 @@ export class AiController {
     try {
       const tx = applyChanges(doc, item.p.title, item.p.changes);
       item.tx = tx;
-      this.settle(item, 'applied', { status: 'applied', label: tx.label });
-      const first = item.p.preview.edits[0];
-      if (first) this.app.goTo(`'${first.sheet.replace(/'/g, "''")}'!${first.cell}`);
+      this.settle(item, 'applied', { status: 'applied', label: tx.label, auto });
+      this.show(item);
     } catch (e) {
       const msg = (e as Error).message || String(e);
       this.settle(item, 'failed', { status: 'failed', error: msg }, msg);
     }
+  }
+
+  /** The block of cells a change wrote on its main sheet (including tables its formulas fill). */
+  changedRange(item: ProposalItem): { sheet: string; range: Range } | null {
+    const edits = item.p.preview.edits;
+    if (!edits.length) return null;
+    const sheet = edits[0].sheet;
+    let box: Range | null = null;
+    for (const d of edits) {
+      if (d.sheet !== sheet) continue;
+      for (const ref of [d.cell, d.spill]) {
+        const r = ref ? parseRange(ref) : null;
+        if (!r) continue;
+        box = box ? { r1: Math.min(box.r1, r.r1), c1: Math.min(box.c1, r.c1), r2: Math.max(box.r2, r.r2), c2: Math.max(box.c2, r.c2) } : r;
+      }
+    }
+    return box ? { sheet, range: box } : null;
+  }
+
+  /** Selects what a change wrote, so it's easy to see on the sheet. */
+  show(item: ProposalItem): void {
+    const c = this.changedRange(item);
+    if (c) this.app.goTo(`'${c.sheet.replace(/'/g, "''")}'!${formatRange(c.range)}`);
+  }
+
+  /** Advanced format on the cells a change wrote. */
+  format(item: ProposalItem): void {
+    if (item.state !== 'applied' || this.app.doc.wb !== item.wb) return;
+    const c = this.changedRange(item);
+    if (!c || !this.app.goTo(`'${c.sheet.replace(/'/g, "''")}'!${formatRange(c.range)}`)) return;
+    this.app.advancedFormat();
   }
 
   reject(item: ProposalItem, feedback?: string): void {
@@ -262,6 +322,7 @@ export class AiController {
     const latest = this.app.doc.history.peekUndo() === item.tx;
     const r = revertChanges(this.app.doc, item.tx);
     item.state = 'undone';
+    item.undoneUnreported = true;
     item.note = !latest && r.skipped ? `Cells you changed afterwards were kept (${r.skipped}).` : undefined;
     this.onChange?.(item);
   }
@@ -299,8 +360,13 @@ export class AiController {
     if (e.type !== 'change' || e.direction === 'do') return;
     for (const it of this.items) {
       if (it.kind !== 'proposal' || it.tx !== e.tx) continue;
-      if (e.direction === 'undo' && it.state === 'applied') it.state = 'undone';
-      else if (e.direction === 'redo' && it.state === 'undone') it.state = 'applied';
+      if (e.direction === 'undo' && it.state === 'applied') {
+        it.state = 'undone';
+        it.undoneUnreported = true;
+      } else if (e.direction === 'redo' && it.state === 'undone') {
+        it.state = 'applied';
+        it.undoneUnreported = false;
+      }
       else continue;
       it.note = undefined;
       this.onChange?.(it);

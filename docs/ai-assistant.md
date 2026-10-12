@@ -1,6 +1,6 @@
 # AI assistant (Beta)
 
-The AI assistant works with the whole workbook, not just the cells on screen. Ask it a question or describe a job, and it reads what it needs: sheets, formulas, charts, highlight rules and dropdowns. When it wants to change something, it proposes the change and shows you exactly what will happen first. Nothing in the workbook changes until you click **Apply**, and every applied change undoes in one click.
+The AI assistant works with the whole workbook, not just the cells on screen. Ask it a question or describe a job, and it reads what it needs: sheets, formulas, charts, highlight rules and dropdowns. When it changes something, the change goes straight into the sheet so you can see it, together with a list of every cell that changed and a one-click **Undo**. If you'd rather approve each change first, turn on **Settings → AI assistant → Ask before changing the workbook**.
 
 > The assistant is in development. It's available in the desktop app on the **Developer branch** (Settings → Updates → Developer branch).
 
@@ -24,20 +24,21 @@ Things to try:
 
 - **Reads.** Every time the assistant looks at the workbook, a line shows what it looked at. For example: *Read Transactions!A4:P200 — 3,200 cells*, *Calculated =SUMIFS(…)*, *Traced Report!D14* or *Searched formulas for "Data!"*.
 - **Answers.** Cell addresses in answers, like Transactions!L5, are links. Click one to jump to those cells.
-- **Proposals.** A card describes each change the assistant wants to make:
+- **Changes.** A card describes each change the assistant made:
   - what it does, step by step;
-  - **every cell that changes**, before → after, including the formula it writes;
-  - **other results that change**: formulas elsewhere in the workbook whose values would change as a result, before → after;
+  - **every cell that changes**, before → after, including the formula it writes, and how much of the sheet a table formula fills;
+  - **other results that change**: formulas elsewhere in the workbook whose values change as a result, before → after;
   - how many cells only get new formatting.
 
-  The preview is exact. Gridline tries the change on the workbook, measures the result, and puts everything back before you see the card.
+  Gridline selects the changed cells so you can look at them on the sheet. Live data (NFL stats, prices, weather) shows "Loading…" until it arrives.
 
-## Apply, reject, undo
+## Undo, format, approve
 
-- **Apply** makes the change as a single step. Formulas recalculate and Gridline jumps to the first changed cell.
-- **Reject** leaves the workbook untouched. To tell the assistant what to do instead, type in the box under the buttons and press **Enter**, for example "use a new sheet instead".
-- **Undo** on an applied card reverses everything that change did, in one click. This works even after you've made other edits since. Cells you changed yourself afterwards are left alone.
-- AI changes are ordinary undo steps too, named like *AI: Add a Category column*, so **Ctrl+Z** and **Ctrl+Y** also work. The card keeps up with them.
+- **Undo** on a card reverses everything that change did, in one click. This works even after you've made other edits since: cells whose contents you changed yourself afterwards are left alone, and formatting you added is kept.
+- **Advanced format** styles the changed cells as a table (header, number formats, banded rows, column widths). **Show** selects them again.
+- AI changes are ordinary undo steps too, named like *AI: Add a Category column*, so **Ctrl+Z** and **Ctrl+Y** also work. The card keeps up with them, and the assistant is told about anything you undo.
+- Gridline checks each change before applying it. If a formula the assistant wrote would show an error (#SPILL!, #NAME?, #REF!…), the change isn't applied; the assistant is told what's wrong and fixes it.
+- **Approve first (optional).** With **Ask before changing the workbook** on, each change waits with **Apply** and **Reject**. To tell the assistant what to do instead, type in the box under the buttons and press **Enter**.
 
 ## What it can do
 
@@ -66,7 +67,10 @@ Changes it can propose:
 
 It doesn't run macros or open other files. For sports stats, prices, exchange rates, weather and country facts, it uses Gridline's [live-data functions](functions.md) (for example `NFL.LEADERS`, `STOCK` or `WEATHER`) instead of typing in numbers, so your table stays current and nothing is made up.
 
-**Local models:** pick one that supports tools, such as Qwen3-Coder, Qwen 3 or Llama 3.1. If a model writes its actions as text instead of sending them properly (Qwen3-Coder in Ollama sometimes does), Gridline still recognizes them.
+**Local models:**
+- Pick one that supports tools and has at least about 7B parameters: **qwen3:8b**, **qwen3-coder:30b** and similar work well. Smaller models (llama3.2:3b, qwen3:4b) often answer with code or invented numbers instead of changing the sheet, and Gridline shows a tip when you pick one.
+- With Ollama, Gridline sets the **context size** (how much the model can read at once) to 16,384 tokens; change it in **Settings → AI assistant → Context size**. Ollama's own default (often 4,096) is too small for Gridline's instructions, which need about 5,000 tokens. With LM Studio, choose a context of at least 16,384 when you load the model.
+- If a model writes its actions as text instead of sending them properly (Qwen3-Coder in Ollama sometimes does), Gridline still recognizes them.
 
 ## Privacy
 
@@ -95,4 +99,6 @@ It doesn't run macros or open other files. For sports stats, prices, exchange ra
 | Claude model | Sonnet 5.5 (recommended), Opus 5.5 (most capable) or Haiku 5.5 (fastest and cheapest) |
 | Claude API key | Add, replace or remove the key |
 | Server address / Model | Your local server, such as `http://localhost:11434/v1` for Ollama or `http://localhost:1234/v1` for LM Studio, and the model to use |
+| Context size | How much a local model can read at once (Ollama), 16,384 tokens by default |
+| Ask before changing the workbook | Off: changes go straight into the sheet, with Undo. On: each change waits for **Apply** |
 | Most cells per read | How much one read can include |

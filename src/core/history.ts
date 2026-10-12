@@ -112,13 +112,23 @@ export class Transaction {
     for (let i = this.changes.length - 1; i >= 0; i--) {
       const ch = this.changes[i];
       switch (ch.k) {
-        case 'cell':
-          if (ch.sheet.cells.get(ch.key) !== ch.after) {
+        case 'cell': {
+          const cur = ch.sheet.cells.get(ch.key);
+          if (cur === ch.after) into.setCell(ch.sheet, keyRow(ch.key), keyCol(ch.key), ch.before);
+          else if (cur && ch.after && cur.v === ch.after.v && cur.f === ch.after.f) {
+            // Only reformatted since: put the old contents back but keep the new formatting
+            const next: Cell = { ...cur };
+            for (const k of ['v', 'f', 'cached'] as const) {
+              if (ch.before?.[k] === undefined) delete next[k];
+              else (next as Record<string, unknown>)[k] = ch.before[k];
+            }
+            into.setCell(ch.sheet, keyRow(ch.key), keyCol(ch.key), next);
+          } else {
             skipped++;
             continue;
           }
-          into.setCell(ch.sheet, keyRow(ch.key), keyCol(ch.key), ch.before);
           break;
+        }
         case 'map':
           if (ch.map.get(ch.key) !== ch.after) {
             skipped++;

@@ -2,6 +2,7 @@
 // propose_changes only previews — nothing changes until the user approves.
 import type { AiToolDef } from '../../shared/api';
 import { external } from '../data/external';
+import { FUNCTIONS } from '../formula/functions/registry';
 import type { Doc } from '../doc';
 import type { Change } from './changes';
 import { describeCell, describeSheet, evaluateFormula, findCells, readRange, ReadError, type ReadMode } from './workbook';
@@ -117,7 +118,7 @@ export const TOOLS: AiToolDef[] = [
   {
     name: 'propose_changes',
     description:
-      'Propose changes to the workbook. Nothing changes yet: the user sees a preview with every cell that changes (before → after) and every formula result elsewhere that changes, then approves or rejects. The result tells you what they decided. Group everything needed for one request into a single proposal. Changes apply in order, and addresses in later changes refer to the sheet after earlier ones — put row/column insertions and deletions first.',
+      'Change the workbook — the only way to change it. The user sees every cell that changes (before → after) and every formula result elsewhere that changes, and can undo it in one click (or, if they chose to, approves it first). The result tells you what happened. Group everything needed for one request into one call. Changes apply in order, and addresses in later changes refer to the sheet after earlier ones — put row/column insertions and deletions first. For sports stats, prices or weather, write Gridline\'s live-data formulas (e.g. =NFL.LEADERS(...)) instead of typing numbers.',
     input_schema: {
       type: 'object',
       properties: {
@@ -201,7 +202,14 @@ export function runReadTool(doc: Doc, name: string, input: Record<string, unknow
         return { content: text, log: `Calculated ${f.startsWith('=') ? f : '=' + f}` };
       }
     }
-    return { content: `There's no tool called "${name}".`, isError: true, log: `Unknown tool ${name}` };
+    if (FUNCTIONS.has(name.toUpperCase())) {
+      return {
+        content: `${name.toUpperCase()} is a spreadsheet function, not one of your tools. To use it, write it as a formula into a cell with propose_changes, e.g. {"op": "set_values", "start": "A1", "values": [["=${name.toUpperCase()}(…)"]]}, or try it first with the evaluate tool. Your tools are: ${TOOLS.map((t) => t.name).join(', ')}.`,
+        isError: true,
+        log: `Explained to the AI that ${name.toUpperCase()} is a formula, not a tool`,
+      };
+    }
+    return { content: `There's no tool called "${name}". Your tools are: ${TOOLS.map((t) => t.name).join(', ')}.`, isError: true, log: `Unknown tool ${name}` };
   } catch (e) {
     const msg = e instanceof ReadError ? e.message : `Error: ${(e as Error).message || String(e)}`;
     return { content: msg, isError: true, log: `${name.replace(/_/g, ' ')} failed: ${msg}` };
