@@ -43,6 +43,8 @@ export interface GridlineApi {
   showInFolder(path: string): void;
   confirmClose(): void;
   onRequestClose(cb: () => void): void;
+  /** Files opened from outside (Explorer, a second launch) for this window to open in tabs. */
+  onOpenPaths(cb: (paths: string[]) => void): void;
   toggleDevTools(): void;
   appVersion(): Promise<string>;
   /** Downloads live data through the desktop shell (allow-listed sites, cached on disk). */

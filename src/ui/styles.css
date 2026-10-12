@@ -3707,3 +3707,130 @@ textarea.input {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
+
+/* ---------- workbook tabs (title bar) ---------- */
+.book-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 100%;
+}
+.book-tabs-list {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.book-tabs-list::-webkit-scrollbar {
+  display: none;
+}
+.book-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* an explicit width: flex-basis alone doesn't count when the title bar measures the strip */
+  flex: 0 1 auto;
+  width: 180px;
+  min-width: 96px;
+  height: 30px;
+  padding: 0 5px 0 10px;
+  border-radius: 9px;
+  color: var(--text-muted);
+  user-select: none;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.book-tab:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.book-tab.on {
+  background: var(--panel-2);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.book-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.book-tab-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: var(--text-faint);
+}
+.book-tab.on .book-tab-icon {
+  color: var(--accent);
+}
+.book-tab-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+}
+.book-tab.on .book-tab-name {
+  font-weight: 600;
+}
+/* Unsaved: a dot, which turns into × when you point at the tab */
+.book-tab-dot {
+  display: none;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: 0 6px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.book-tab.dirty .book-tab-dot {
+  display: block;
+}
+.book-tab.dirty:hover .book-tab-dot {
+  display: none;
+}
+.book-tab-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  visibility: hidden;
+}
+.book-tab.on .book-tab-close,
+.book-tab:hover .book-tab-close {
+  visibility: visible;
+}
+.book-tab.dirty:not(:hover) .book-tab-close {
+  display: none;
+}
+.book-tab-close:hover {
+  background: var(--active);
+  color: var(--text);
+}
+.book-tab.drop-left {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.book-tab.drop-right {
+  box-shadow: inset -2px 0 0 var(--accent);
+}
+.book-tab-new {
+  flex: none;
+  border-radius: 8px;
+}
+.unsaved-list {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  line-height: 1.6;
+}

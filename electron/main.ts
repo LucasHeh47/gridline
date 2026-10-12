@@ -361,19 +361,33 @@ setupUpdates();
 
 // ---------- lifecycle ----------
 
+/** Lets a window open these files and asks it to (each becomes a tab). */
+function sendPaths(win: BrowserWindow, files: string[]): void {
+  const full = files.map((f) => allow(f));
+  win.webContents.send('app:open-paths', full);
+}
+
+/** One window for several files: the first opens with it, the rest arrive as tabs. */
+function openInNewWindow(files: string[]): void {
+  const win = createWindow(files[0]);
+  if (files.length > 1) win.webContents.once('did-finish-load', () => sendPaths(win, files.slice(1)));
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', (_e, argv) => {
     const files = filesFromArgv(argv);
-    if (files.length) for (const f of files) createWindow(f);
-    else {
-      const win = BrowserWindow.getAllWindows()[0];
-      if (win) {
-        if (win.isMinimized()) win.restore();
-        win.focus();
-      } else createWindow();
+    // Files opened while Gridline runs become tabs in the window used last
+    const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    if (!win) {
+      if (files.length) openInNewWindow(files);
+      else createWindow();
+      return;
     }
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    if (files.length) sendPaths(win, files);
   });
 
   app.whenReady().then(() => {
@@ -382,7 +396,7 @@ if (!app.requestSingleInstanceLock()) {
     const files = filesFromArgv(process.argv);
     if (process.env.GRIDLINE_OPEN && existsSync(process.env.GRIDLINE_OPEN)) files.push(process.env.GRIDLINE_OPEN);
     const startTemplate = process.env.GRIDLINE_TEMPLATE;
-    if (files.length) for (const f of files) createWindow(f);
+    if (files.length) openInNewWindow(files);
     else createWindow(undefined, startTemplate && /^[a-z-]{1,32}$/.test(startTemplate) ? startTemplate : undefined, true);
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

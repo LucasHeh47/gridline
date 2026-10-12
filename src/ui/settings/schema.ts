@@ -131,7 +131,7 @@ export const SETTINGS: SettingDef[] = [
 
   // ---------- Files ----------
   { id: 'files.startup', section: 'files', group: 'Opening', label: 'When Gridline starts', type: 'select', default: 'home', options: opts(['home', 'Show the Home page (recent files and presets)'], ['blank', 'Open a blank workbook'], ['last', 'Reopen the last file']) },
-  { id: 'files.openIn', section: 'files', group: 'Opening', label: 'Open files in', type: 'select', default: 'auto', options: opts(['auto', 'This window if it is empty, otherwise a new one'], ['new', 'Always a new window'], ['same', 'Always this window']) },
+  { id: 'files.openIn', section: 'files', group: 'Opening', label: 'Open files in', description: 'Files that are already open just switch to their tab.', type: 'select', default: 'tab', options: opts(['tab', 'A new tab (or this one if it is empty)'], ['new', 'A new window'], ['same', 'This tab, replacing what is open']), keywords: 'tabs window' },
   { id: 'files.recentCount', section: 'files', group: 'Opening', label: 'Recent files to show', type: 'number', default: 10, min: 3, max: 30, step: 1 },
   { id: 'files.autosave', section: 'files', group: 'Saving', label: 'AutoSave', description: 'Saves files that already have a location. New files still need a first save.', type: 'select', default: '0', options: minutes(1, 2, 5, 10), refresh: ['timers'] },
   { id: 'files.csvWarning', section: 'files', group: 'Saving', label: 'Warn before saving formatting into a CSV', description: 'CSV files keep only values; formatting, formulas and extra sheets are lost.', type: 'toggle', default: true },
