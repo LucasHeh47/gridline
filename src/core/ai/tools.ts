@@ -1,6 +1,7 @@
 // The tools the AI assistant can call. Read tools run immediately (each read is logged in the chat);
 // propose_changes only previews — nothing changes until the user approves.
 import type { AiToolDef } from '../../shared/api';
+import { external } from '../data/external';
 import type { Doc } from '../doc';
 import type { Change } from './changes';
 import { describeCell, describeSheet, evaluateFormula, findCells, readRange, ReadError, type ReadMode } from './workbook';
@@ -110,7 +111,7 @@ export const TOOLS: AiToolDef[] = [
   },
   {
     name: 'evaluate',
-    description: 'Calculate any Excel formula against the workbook without writing it anywhere, e.g. =SUM(Data!F:F), =COUNTIFS(...), =SUMPRODUCT(...), =FILTER(...) or =UNIQUE(...). Use it to check totals, count matches, find mismatches and test a formula before proposing it. References without a sheet name refer to the given (or current) sheet.',
+    description: "Calculate any formula against the workbook without writing it anywhere, e.g. =SUM(Data!F:F), =COUNTIFS(...), =FILTER(...), =UNIQUE(...) or Gridline's live-data functions like =NFL.LEADERS(\"Passing Yards\", 2025, 10, \"QB\"). Use it to check totals, count matches, find mismatches, look up real data and test a formula before proposing it. References without a sheet name refer to the given (or current) sheet.",
     input_schema: { type: 'object', properties: { formula: { type: 'string' }, sheet: sheetProp }, required: ['formula'] },
   },
   {
@@ -145,6 +146,29 @@ export interface ProposalInput {
 
 function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+/**
+ * Like runReadTool, but a formula that needs live data (NFL stats, prices, weather) waits for the
+ * download instead of answering #BUSY!.
+ */
+export async function runReadToolAsync(doc: Doc, name: string, input: Record<string, unknown>, maxCells: number, waitMs = 25_000): Promise<ToolOutcome> {
+  let r = runReadTool(doc, name, input, maxCells);
+  if (name !== 'evaluate') return r;
+  const deadline = Date.now() + waitMs;
+  while (r.content.includes('#BUSY!') && Date.now() < deadline) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(done, Math.max(0, deadline - Date.now()));
+      const off = external.onChange(done);
+      function done() {
+        clearTimeout(timer);
+        off();
+        resolve();
+      }
+    });
+    r = runReadTool(doc, name, input, maxCells);
+  }
+  return r;
 }
 
 /** Runs a read tool. propose_changes is handled by the agent (it waits for the user). */

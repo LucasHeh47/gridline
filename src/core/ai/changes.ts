@@ -371,6 +371,8 @@ export interface CellDiff {
   after: string;
   beforeFormula?: string;
   afterFormula?: string;
+  /** A formula that returns a table: the cells it fills, like "A2:E12". */
+  spill?: string;
 }
 
 export interface Preview {
@@ -400,6 +402,11 @@ function formulaCells(doc: Doc): Map<string, { sheet: Sheet; key: number }> {
 
 function shown(doc: Doc, sheet: Sheet, key: number): string {
   return displayText(doc, sheet, keyRow(key), keyCol(key));
+}
+
+/** True while some of the preview's results are still downloading (live data). */
+export function previewLoading(p: Preview): boolean {
+  return [...p.edits, ...p.recalcs].some((d) => d.after.startsWith('#BUSY!'));
 }
 
 /** Tries the changes and reports exactly what they would do, without changing anything. */
@@ -435,6 +442,9 @@ export function previewChanges(doc: Doc, changes: Change[]): Preview {
             continue;
           }
           editCount++;
+          const sp = a?.f !== undefined ? doc.engine.spillAt(ch.sheet, keyRow(ch.key), keyCol(ch.key)) : null;
+          const spill = sp && (sp.r2 > sp.r1 || sp.c2 > sp.c1) ? formatRange(sp) : undefined;
+          if (spill) notes.push(`${ch.sheet.name}!${formatCell(keyRow(ch.key), keyCol(ch.key))} fills ${ch.sheet.name}!${spill} with a table (${sp!.r2 - sp!.r1 + 1} rows × ${sp!.c2 - sp!.c1 + 1} columns).`);
           if (edits.length < SHOW) {
             edits.push({
               sheet: ch.sheet.name,
@@ -443,6 +453,7 @@ export function previewChanges(doc: Doc, changes: Change[]): Preview {
               beforeFormula: b?.f !== undefined ? '=' + b.f : undefined,
               after: shown(doc, ch.sheet, ch.key),
               afterFormula: a?.f !== undefined ? '=' + a.f : undefined,
+              spill,
             });
           }
         }

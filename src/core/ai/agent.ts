@@ -5,7 +5,8 @@ import type { AiBlock, AiEvent, AiMessage, AiProvider, AiRequest } from '../../s
 import { redactSecrets } from '../../shared/secrets';
 import type { Doc } from '../doc';
 import { previewChanges, type Change, type Preview } from './changes';
-import { runReadTool, TOOLS, type ProposalInput } from './tools';
+import { FUNCTIONS } from '../formula/functions/registry';
+import { runReadToolAsync, TOOLS, type ProposalInput } from './tools';
 
 export interface AiTransport {
   /** Streams one model response. Resolves when the response is finished (or cancelled). */
@@ -48,6 +49,23 @@ export class AgentError extends Error {}
 
 const OVERVIEW_RE = /^<workbook>[\s\S]*?<\/workbook>\n\n/;
 
+/** Gridline's own functions (beyond Excel's), listed from the function registry. */
+export function gridlineFunctions(): string {
+  const groups: [string, string][] = [
+    ['NFL', 'NFL (nflverse data, 1999 to today; season defaults to the current one)'],
+    ['Personal finance', 'Live prices and personal finance'],
+    ['World', 'Weather and world'],
+  ];
+  const out: string[] = [];
+  for (const [cat, title] of groups) {
+    const fns = [...FUNCTIONS.values()].filter((f) => f.category === cat).sort((a, b) => a.name.localeCompare(b.name));
+    if (!fns.length) continue;
+    out.push(`${title}:`);
+    for (const f of fns) out.push(`- ${f.name}(${f.args}): ${f.desc}`);
+  }
+  return out.join('\n');
+}
+
 export function systemPrompt(today = new Date()): string {
   const d = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   return `You are the AI assistant built into Gridline, a spreadsheet app that opens and saves Excel files. You help the user understand, check and change their workbook. Today is ${d}.
@@ -64,9 +82,13 @@ How you work:
 - For duplicates, decide what makes two rows the same (e.g. same date, amount and description), count them with COUNTIFS, and flag or highlight them; never delete rows unless asked.
 - For charts, build a small summary table with formulas when the data isn't already summarized, then chart that table.
 - Never ask for API keys, passwords or other secrets. Values that look like keys appear as [hidden API key]; leave those cells alone.
+- Never make up facts or numbers such as sports stats, prices, rates or weather. Use the user's data, or Gridline's live-data functions below (check results with evaluate first). If nothing covers it, say so; enter example numbers only when the user asks for them, and label them as examples.
 - Dates are serial numbers in formulas (DATE, EOMONTH, TEXT work as in Excel); reads show them as displayed.
 - Changes and reads without a sheet name use the sheet the user is looking at; name the sheet whenever the workbook has more than one.
-- When explaining, refer to cells as Sheet!A1 (the user can click them). Be concise: short paragraphs or lists, no large tables in the chat. Don't describe your tool calls step by step — the user sees them.`;
+- When explaining, refer to cells as Sheet!A1 (the user can click them). Be concise: short paragraphs or lists, no large tables in the chat. Don't describe your tool calls step by step — the user sees them.
+
+Gridline's own functions, on top of Excel's. They download live data, keep it offline and refresh on their own, so prefer them to typing in numbers. Functions that return a table spill into the cells below and to the right (like FILTER): write the formula in one cell and leave that area empty. Stat names for NFL functions come from =NFL.STATS(), e.g. "Passing Yards", "Passing TDs", "Interceptions", "Completion %", "Passer Rating", "Rushing Yards", "Receptions", "Fantasy Points PPR". To fill a grid, pass ranges: =NFL.PLAYER("Josh Allen", B1:E1, A2:A6) gives seasons down and stats across.
+${gridlineFunctions()}`;
 }
 
 let seq = 0;
@@ -120,7 +142,7 @@ export class Conversation {
             if (r.stopped) stopped = true;
             results.push({ type: 'tool_result', tool_use_id: call.id, content: redactSecrets(r.content), ...(r.isError ? { is_error: true } : {}) });
           } else {
-            const r = runReadTool(this.doc, call.name, input, opts.maxCells);
+            const r = await runReadToolAsync(this.doc, call.name, input, opts.maxCells);
             this.hooks.onRead(r.log, !!r.isError);
             results.push({ type: 'tool_result', tool_use_id: call.id, content: redactSecrets(r.content), ...(r.isError ? { is_error: true } : {}) });
           }

@@ -1,7 +1,10 @@
 // The AI assistant in the app: one conversation per window, kept while the panel is closed. Reads
 // are logged in the chat; proposals wait for Apply or Reject; applied changes keep an Undo button.
 import { AgentError, Conversation, type AgentOptions, type AiTransport, type Proposal, type ProposalOutcome } from '../../core/ai/agent';
-import { applyChanges, revertChanges } from '../../core/ai/changes';
+import { applyChanges, previewChanges, previewLoading, revertChanges } from '../../core/ai/changes';
+import { formatRange, parseRange } from '../../core/address';
+import { external } from '../../core/data/external';
+import { displayText } from '../../core/ops/data';
 import { workbookOverview } from '../../core/ai/workbook';
 import type { DocEvent } from '../../core/doc';
 import type { Transaction } from '../../core/history';
@@ -73,15 +76,30 @@ export class AiController {
   private ctl: AbortController | null = null;
   private wb: Workbook;
   private current: { kind: 'assistant'; text: string } | null = null;
+  /** Bumped by New chat, so a request still winding down can't touch the new chat. */
+  private gen = 0;
 
   constructor(
     private app: App,
-    transport: AiTransport = platformTransport,
+    private transport: AiTransport = platformTransport,
   ) {
     this.wb = app.doc.wb;
-    this.conv = new Conversation(app.doc, transport, {
-      onStep: () => (this.current = null),
+    this.conv = this.makeConversation();
+    app.doc.on((e) => this.docChanged(e));
+    // Previews run on a trial copy, so their downloads don't count as sheet changes: listen directly
+    external.onChange(() => this.dataArrived());
+  }
+
+  /** A conversation whose callbacks only reach the chat while it's the current one. */
+  private makeConversation(): Conversation {
+    const gen = this.gen;
+    const live = () => gen === this.gen;
+    return new Conversation(this.app.doc, this.transport, {
+      onStep: () => {
+        if (live()) this.current = null;
+      },
       onText: (t) => {
+        if (!live()) return;
         if (!this.current) {
           this.current = { kind: 'assistant', text: '' };
           this.push(this.current);
@@ -90,6 +108,7 @@ export class AiController {
         this.onChange?.(this.current);
       },
       onRead: (text, error) => {
+        if (!live()) return;
         this.current = null;
         const last = this.items[this.items.length - 1];
         if (last?.kind === 'reads') {
@@ -99,6 +118,7 @@ export class AiController {
       },
       propose: (p, signal) =>
         new Promise<ProposalOutcome>((resolve) => {
+          if (!live()) return resolve({ status: 'stopped' });
           this.current = null;
           const item: ProposalItem = { kind: 'proposal', p, state: 'pending', wb: this.app.doc.wb, resolve };
           signal.addEventListener('abort', () => this.settle(item, 'stopped', { status: 'stopped' }));
@@ -109,7 +129,6 @@ export class AiController {
         return workbookOverview(app.doc, { sheet: app.sheet, ranges: app.sel.ranges, active: app.sel.active });
       },
     });
-    app.doc.on((e) => this.docChanged(e));
   }
 
   /** Still in development: on the Developer branch and in dev builds, desktop app only. */
@@ -158,6 +177,7 @@ export class AiController {
       return;
     }
     if (this.app.doc.wb !== this.wb) this.newChat();
+    const gen = this.gen;
     this.running = true;
     this.current = null;
     this.push({ kind: 'user', text });
@@ -167,12 +187,15 @@ export class AiController {
       await this.conv.send(text, this.options(), ctl.signal);
     } catch (e) {
       const msg = e instanceof AgentError ? e.message : `Something went wrong: ${(e as Error).message || String(e)}`;
-      this.push({ kind: 'error', text: msg, action: /API key/i.test(msg.split(HIDDEN).join('')) ? 'key' : /Settings/.test(msg) ? 'settings' : undefined });
+      if (gen === this.gen) this.push({ kind: 'error', text: msg, action: /API key/i.test(msg.split(HIDDEN).join('')) ? 'key' : /Settings/.test(msg) ? 'settings' : undefined });
     } finally {
-      if (this.ctl === ctl) this.ctl = null;
-      this.running = false;
-      this.current = null;
-      this.onChange?.();
+      // Unless New chat was clicked meanwhile (that chat has its own state)
+      if (gen === this.gen) {
+        this.ctl = null;
+        this.running = false;
+        this.current = null;
+        this.onChange?.();
+      }
     }
   }
 
@@ -183,8 +206,11 @@ export class AiController {
   newChat(): void {
     this.stop();
     for (const it of this.items) if (it.kind === 'proposal' && it.state === 'pending') this.settle(it, 'stopped', { status: 'stopped' });
+    this.gen++;
+    this.ctl = null;
+    this.running = false;
     this.items = [];
-    this.conv.clear();
+    this.conv = this.makeConversation();
     this.wb = this.app.doc.wb;
     this.current = null;
     this.onChange?.();
@@ -238,6 +264,29 @@ export class AiController {
     item.state = 'undone';
     item.note = !latest && r.skipped ? `Cells you changed afterwards were kept (${r.skipped}).` : undefined;
     this.onChange?.(item);
+  }
+
+  /** Live data arrived: fill in previews that were waiting for it. */
+  private dataArrived(): void {
+    const doc = this.app.doc;
+    for (const it of this.items) {
+      if (it.kind !== 'proposal' || it.wb !== doc.wb || !previewLoading(it.p.preview)) continue;
+      if (it.state === 'pending') {
+        const next = previewChanges(doc, it.p.changes);
+        if (!next.error) it.p.preview = next;
+      } else if (it.state === 'applied') {
+        // Already in the sheet: show what the cells hold now
+        for (const d of it.p.preview.edits) {
+          const s = doc.wb.sheetByName(d.sheet);
+          const at = parseRange(d.cell);
+          if (!s || !at || !d.after.startsWith('#BUSY!')) continue;
+          d.after = displayText(doc, s, at.r1, at.c1);
+          const sp = doc.engine.spillAt(s, at.r1, at.c1);
+          if (sp && (sp.r2 > sp.r1 || sp.c2 > sp.c1)) d.spill = formatRange(sp);
+        }
+      } else continue;
+      this.onChange?.(it);
+    }
   }
 
   /** Keeps cards in step with Undo/Redo, and starts over when another file is opened. */

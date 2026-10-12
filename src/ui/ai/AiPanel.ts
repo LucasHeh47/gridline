@@ -303,7 +303,7 @@ export class AiPanel implements PanelContent {
           } }, this.app.doc.wb.sheets.length > 1 || d.sheet !== this.app.sheet.name ? ref : d.cell)),
           h('td', { class: 'before' }, cellText(d.before, formulas ? d.beforeFormula : undefined)),
           h('td', { class: 'arrow' }, '→'),
-          h('td', { class: 'after' }, cellText(d.after, formulas ? d.afterFormula : undefined)),
+          h('td', { class: 'after' }, cellText(d.after, formulas ? d.afterFormula : undefined, d.spill)),
         ),
       );
     }
@@ -328,9 +328,12 @@ export class AiPanel implements PanelContent {
   }
 }
 
-function cellText(text: string, formula?: string): (HTMLElement | string)[] {
-  const out: (HTMLElement | string)[] = [text === '' ? h('span', { class: 'faint' }, 'empty') : h('span', { class: 'val' }, text)];
+function cellText(text: string, formula?: string, spill?: string): (HTMLElement | string)[] {
+  const out: (HTMLElement | string)[] = [
+    text === '' ? h('span', { class: 'faint' }, 'empty') : text.startsWith('#BUSY!') ? h('span', { class: 'faint', title: 'Downloading live data' }, 'Loading…') : h('span', { class: 'val' }, text),
+  ];
   if (formula) out.push(h('div', { class: 'ai-formula', title: formula }, formula));
+  if (spill) out.push(h('div', { class: 'ai-spill' }, `fills ${spill}`));
   return out;
 }
 

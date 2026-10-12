@@ -64,7 +64,9 @@ Changes it can propose:
 - sort, add filters, freeze panes;
 - add notes and dropdown lists.
 
-It doesn't run macros, open other files or reach the internet.
+It doesn't run macros or open other files. For sports stats, prices, exchange rates, weather and country facts, it uses Gridline's [live-data functions](functions.md) (for example `NFL.LEADERS`, `STOCK` or `WEATHER`) instead of typing in numbers, so your table stays current and nothing is made up.
+
+**Local models:** pick one that supports tools, such as Qwen3-Coder, Qwen 3 or Llama 3.1. If a model writes its actions as text instead of sending them properly (Qwen3-Coder in Ollama sometimes does), Gridline still recognizes them.
 
 ## Privacy
 

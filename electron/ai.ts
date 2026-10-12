@@ -14,6 +14,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { AiBlock, AiEvent, AiMessage, AiRequest, AiToolDef } from '../src/shared/api';
 import { redactSecrets, validKeyFormat } from '../src/shared/secrets';
+import { ToolCallStream } from '../src/shared/toolCalls';
 
 const keyPath = () => path.join(app.getPath('userData'), 'ai-key.bin');
 const running = new Map<string, AbortController>();
@@ -234,6 +235,9 @@ async function chatLocal(target: WebContents, id: string, req: AiRequest, signal
   }
   const calls = new Map<number, { id: string; name: string; args: string }>();
   let stopReason = 'end_turn';
+  // Some local models write tool calls as text (e.g. Qwen3-Coder's <function=…> XML): hold that
+  // back from the chat and turn it into real calls when the reply ends
+  const textCalls = new ToolCallStream(req.tools);
   await readSse(res, (_event, data) => {
     if (data.trim() === '[DONE]') return;
     let j: Record<string, any>;
@@ -244,17 +248,27 @@ async function chatLocal(target: WebContents, id: string, req: AiRequest, signal
     }
     const choice = j.choices?.[0];
     const delta = choice?.delta ?? {};
-    if (typeof delta.content === 'string' && delta.content) send(target, id, { type: 'text', text: delta.content });
+    if (typeof delta.content === 'string' && delta.content) {
+      const shown = textCalls.push(delta.content);
+      if (shown) send(target, id, { type: 'text', text: shown });
+    }
     for (const tc of delta.tool_calls ?? []) {
-      const i = tc.index ?? 0;
+      // Servers that leave out `index` send each call whole, with its own id
+      const known = tc.id ? [...calls.entries()].find(([, c]) => c.id === tc.id)?.[0] : undefined;
+      const i = typeof tc.index === 'number' ? tc.index : (known ?? (tc.id ? calls.size : Math.max(0, calls.size - 1)));
       const cur = calls.get(i) ?? { id: tc.id ?? `call_${i}_${Date.now()}`, name: '', args: '' };
       if (tc.id) cur.id = tc.id;
-      if (tc.function?.name) cur.name += tc.function.name;
-      if (tc.function?.arguments) cur.args += tc.function.arguments;
+      const name = tc.function?.name;
+      if (name && cur.name !== name) cur.name += name;
+      const args = tc.function?.arguments;
+      if (typeof args === 'string') cur.args += args;
+      else if (args && typeof args === 'object') cur.args = JSON.stringify(args);
       calls.set(i, cur);
     }
     if (choice?.finish_reason) stopReason = choice.finish_reason === 'tool_calls' ? 'tool_use' : choice.finish_reason;
   });
+  const rest = textCalls.finish();
+  if (rest.text) send(target, id, { type: 'text', text: rest.text });
   for (const c of calls.values()) {
     let input: unknown = {};
     try {
@@ -264,7 +278,10 @@ async function chatLocal(target: WebContents, id: string, req: AiRequest, signal
     }
     send(target, id, { type: 'tool_use', id: c.id, name: c.name, input });
   }
-  send(target, id, { type: 'done', stopReason: calls.size ? 'tool_use' : stopReason });
+  // Calls written as text count only when the server sent no real ones
+  const fromText = calls.size ? [] : rest.calls;
+  fromText.forEach((c, i) => send(target, id, { type: 'tool_use', id: `call_text_${Date.now().toString(36)}_${i}`, name: c.name, input: c.input }));
+  send(target, id, { type: 'done', stopReason: calls.size || fromText.length ? 'tool_use' : stopReason });
 }
 
 // ---------- IPC ----------

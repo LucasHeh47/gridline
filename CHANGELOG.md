@@ -9,6 +9,9 @@
   - Use **Claude** with your own API key, or a **model on your computer** with Ollama or LM Studio, so the workbook never leaves it. Choose in **Settings → AI assistant**.
   - **Your API key stays secret.** It's encrypted with your computer's keychain and never shown again. Only Gridline's background process uses it, and only to talk to Anthropic. Keys pasted into the chat aren't sent, and keys found in a workbook are hidden from the AI.
   - Cell addresses in answers are links that jump to those cells.
+  - **Uses real data, not made-up numbers.** The assistant knows Gridline's live-data functions, so "make a table with NFL quarterback stats" builds a live `NFL.LEADERS` table instead of typing in invented stats. It can also look up live data while it works.
+  - **Works with more local models.** Some models, like Qwen3-Coder in Ollama, write their actions as text instead of sending them properly. Gridline now recognizes these, so the changes show up as proposals instead of code in the chat. Reasoning blocks (`<think>…</think>`) are hidden.
+  - Proposal previews show "Loading…" while live data downloads and fill in when it arrives. A formula that fills a whole table shows how much of the sheet it covers.
 
 ## 1.0.4
 
