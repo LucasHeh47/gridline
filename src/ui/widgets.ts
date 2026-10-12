@@ -3,23 +3,71 @@ import { Check, ChevronRight, CircleAlert, CircleCheck, Info, X, type IconNode }
 import { clear, h, icon, kbd, placeNear } from './dom';
 
 // ---------- popover ----------
+// Menus, dropdowns and pickers. They close when you press anywhere outside them (the grid too:
+// it cancels pointer presses, so listening for mousedown wasn't enough), when the window loses
+// focus or resizes, and when something outside them scrolls. A submenu counts as part of its menu.
 
-let openPopover: Popover | null = null;
+/** Open popovers, oldest first (a submenu comes after the menu it belongs to). */
+const stack: Popover[] = [];
+let listening = false;
+/** Where keyboard focus goes when a popover closes and there's nowhere better (the grid). */
+let focusFallback: (() => void) | null = null;
+
+export function setFocusFallback(fn: () => void): void {
+  focusFallback = fn;
+}
+
+/** The dropdown a press on its own button just closed (so the click that follows doesn't reopen it). */
+let toggled: { anchor: Element; at: number } | null = null;
+
+function closeOutside(target: EventTarget | null): void {
+  const t = target instanceof Node ? target : null;
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const p = stack[i];
+    if (t && p.el.contains(t)) break;
+    if (t && p.anchor?.contains(t)) {
+      // The button that opened it: works as a toggle (a submenu's row just keeps it open)
+      if (i === 0) {
+        toggled = { anchor: p.anchor, at: Date.now() };
+        p.close();
+      }
+      break;
+    }
+    p.close();
+  }
+}
+
+function listen(): void {
+  if (listening) return;
+  listening = true;
+  document.addEventListener('pointerdown', (e) => closeOutside(e.target), true);
+  document.addEventListener(
+    'wheel',
+    (e) => {
+      if (stack.length && !stack.some((p) => p.el.contains(e.target as Node))) closeOutside(e.target);
+    },
+    { capture: true, passive: true },
+  );
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key !== 'Escape' || !stack.length) return;
+      // One level at a time: a submenu first, then its menu
+      e.stopPropagation();
+      e.preventDefault();
+      stack[stack.length - 1].close();
+    },
+    true,
+  );
+  window.addEventListener('blur', () => closePopovers());
+  window.addEventListener('resize', () => closePopovers());
+}
 
 export class Popover {
   el: HTMLDivElement;
-  private onDoc = (e: MouseEvent) => {
-    if (!this.el.contains(e.target as Node) && !(this.anchorEl && this.anchorEl.contains(e.target as Node))) this.close();
-  };
-  private onKey = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.stopPropagation();
-      e.preventDefault();
-      this.close();
-    }
-  };
   onClose?: () => void;
   private closed = false;
+  private returnFocus: Element | null = null;
 
   constructor(
     content: HTMLElement,
@@ -29,17 +77,28 @@ export class Popover {
     this.el = h('div', { class: `popover ${cls}` }, content);
   }
 
-  /** Opens next to an element or at a point/rect. */
+  get anchor(): HTMLElement | undefined {
+    return this.anchorEl;
+  }
+
+  /** Opens next to an element or at a point/rect. `keepOthers` keeps the menu a submenu belongs to. */
   open(at: HTMLElement | { left: number; top: number; right: number; bottom: number }, prefer: 'below' | 'above' | 'right' = 'below', keepOthers = false): this {
-    if (!keepOthers && openPopover && openPopover !== this) openPopover.close();
-    if (!keepOthers) openPopover = this;
+    listen();
+    const wasToggled = !keepOthers && !!this.anchorEl && toggled?.anchor === this.anchorEl && Date.now() - toggled.at < 700;
+    toggled = null;
+    if (wasToggled) {
+      // Pressing the button of an open dropdown closes it; don't reopen it on the click
+      this.closed = true;
+      return this;
+    }
+    if (!keepOthers) closePopovers();
+    hideTooltip();
+    this.returnFocus = document.activeElement;
+    stack.push(this);
+    document.body.classList.add('popover-open');
     document.body.append(this.el);
     const rect = at instanceof HTMLElement ? at.getBoundingClientRect() : at;
     placeNear(this.el, rect, prefer);
-    setTimeout(() => {
-      document.addEventListener('mousedown', this.onDoc, true);
-      document.addEventListener('keydown', this.onKey, true);
-    }, 0);
     return this;
   }
 
@@ -51,10 +110,18 @@ export class Popover {
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    document.removeEventListener('mousedown', this.onDoc, true);
-    document.removeEventListener('keydown', this.onKey, true);
+    // Submenus opened from this one go too
+    const i = stack.indexOf(this);
+    if (i >= 0) for (const p of stack.splice(i).slice(1).reverse()) p.close();
+    const hadFocus = this.el.contains(document.activeElement);
     this.el.remove();
-    if (openPopover === this) openPopover = null;
+    if (!stack.length) document.body.classList.remove('popover-open');
+    // Keyboard users continue where they were (unless the click moved focus somewhere else)
+    if (hadFocus || document.activeElement === document.body) {
+      const back = this.returnFocus;
+      if (back instanceof HTMLElement && back.isConnected && back !== document.body) back.focus({ preventScroll: true });
+      else if (!stack.length) focusFallback?.();
+    }
     this.onClose?.();
   }
 
@@ -64,7 +131,7 @@ export class Popover {
 }
 
 export function closePopovers(): void {
-  openPopover?.close();
+  for (const p of [...stack].reverse()) p.close();
 }
 
 // ---------- menu ----------
@@ -136,16 +203,48 @@ export function showMenu(items: MenuItem[], at: HTMLElement | { left: number; to
       }
     });
     (row as unknown as { _activate: () => void })._activate = activate;
+    if (item.submenu) row.dataset.submenu = '1';
+    if (item.disabled) row.setAttribute('aria-disabled', 'true');
     rows.push(row);
     list.append(row);
   }
   pop.onClose = () => sub?.close();
+  const enabled = (i: number) => !!rows[i] && !rows[i].classList.contains('disabled');
+  const step = (from: number, dir: 1 | -1) => {
+    for (let k = 1; k <= rows.length; k++) {
+      const i = (from + dir * k + rows.length * 2) % rows.length;
+      if (enabled(i)) return i;
+    }
+    return from;
+  };
   pop.el.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown') setFocus(Math.min(rows.length - 1, focus + 1));
-    else if (e.key === 'ArrowUp') setFocus(Math.max(0, focus - 1));
-    else if (e.key === 'Enter') (rows[focus] as unknown as { _activate?: () => void })?._activate?.();
-    else return;
+    const act = () => (rows[focus] as unknown as { _activate?: () => void })?._activate?.();
+    if (e.key === 'ArrowDown') setFocus(step(focus < 0 ? -1 : focus, 1));
+    else if (e.key === 'ArrowUp') setFocus(step(focus < 0 ? 0 : focus, -1));
+    else if (e.key === 'Home') setFocus(step(-1, 1));
+    else if (e.key === 'End') setFocus(step(rows.length, -1));
+    else if (e.key === 'Enter' || e.key === ' ') act();
+    else if (e.key === 'ArrowRight' && rows[focus]?.dataset.submenu) {
+      act();
+      // Start on the submenu's first item
+      sub?.el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home' }));
+    } else if (e.key === 'ArrowLeft' && parent) pop.close();
+    else if (e.key === 'Tab') {
+      pop.close();
+      parent?.close();
+    } else if (e.key.length === 1 && /\S/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // Jump to the next item starting with the typed letter
+      const ch = e.key.toLowerCase();
+      for (let k = 1; k <= rows.length; k++) {
+        const i = (focus + k) % rows.length;
+        if (enabled(i) && rows[i].querySelector('.mi-label')?.textContent?.trim().toLowerCase().startsWith(ch)) {
+          setFocus(i);
+          break;
+        }
+      }
+    } else return;
     e.preventDefault();
+    e.stopPropagation();
   });
   pop.el.tabIndex = -1;
   pop.open(at, prefer, !!parent);
@@ -235,6 +334,7 @@ export interface DialogButton<T> {
 }
 
 export function dialog<T>(title: string, body: string | HTMLElement, buttons: DialogButton<T>[], opts: { wide?: boolean; cancelValue?: T } = {}): Promise<T> {
+  closePopovers();
   return new Promise((resolve) => {
     const prevFocus = document.activeElement as HTMLElement | null;
     const back = h('div', { class: 'modal-backdrop' });

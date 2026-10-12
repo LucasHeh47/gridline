@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.5
+
+- **Menus close when you click elsewhere.** Right-click menus, ribbon dropdowns, color and font pickers and filter menus now close when you click the sheet, the title bar or anywhere else, when you scroll, when the window loses focus, and when it's resized. Clicking a dropdown's button again closes it.
+- **Better keyboard use in menus.** → opens a submenu and ← goes back; Home and End jump to the first and last item; typing a letter jumps to the next item starting with it; disabled items are skipped. Escape closes one level at a time, and focus goes back to where you were.
+- **A fresh look.** Gridline now looks less like a copy of Excel:
+  - ribbon tools sit in rounded groups instead of labeled sections (the group names can be turned back on in **Settings → Ribbon**);
+  - pill-shaped tabs, and a quieter File button;
+  - the sheet, side panels and macro editor are rounded cards;
+  - selected row and column headings get a soft highlight instead of a bar;
+  - smoother hover effects, and menus fade in.
+- The Advanced format card closes (keeping the formatting) when you click elsewhere.
+- Fixed a light outline around right-click menus.
+
 ## 1.0.4
 
 - **Calculations match Excel exactly.** Tested against an Excel workbook with 9,719 formulas: every result is identical to Excel's, down to the last digit, and all 19,638 cells display the same text. Gridline now:

@@ -98,7 +98,8 @@ export class Ribbon {
       const i = ids.indexOf(this.active);
       this.select(ids[(i + (e.deltaY > 0 ? 1 : -1) + ids.length) % ids.length], false);
     }, { passive: false });
-    document.addEventListener('mousedown', (e) => {
+    // pointerdown: the grid cancels presses, so mousedown never arrives from there
+    document.addEventListener('pointerdown', (e) => {
       if (!this.floating) return;
       const t = e.target;
       if (t instanceof Element && (this.el.contains(t) || t.closest('.popover, .modal-backdrop'))) return;
