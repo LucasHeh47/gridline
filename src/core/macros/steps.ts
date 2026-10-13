@@ -1,6 +1,6 @@
 // No-code macros: a list of plain-English steps (like the Shortcuts app) that compiles to VBA.
-// Text fields can use {Variables}: {Row} inside "For each row", {Count} inside "Repeat", answers
-// saved by "Ask a question", plus {Today} and {Now}.
+// Text fields can use {Variables}: names set by "Set a variable", "Ask a question" and the other
+// Variables steps, what a loop provides ({Row}, {Count}, {Cell}, {Item}, {Sheet}), plus {Today} and {Now}.
 import { toIdentifier } from './project';
 
 export interface Step {
@@ -27,9 +27,17 @@ export interface StepField {
   placeholder?: string;
   /** Can be left empty. */
   optional?: boolean;
+  /** Only shown (and used) when another field has one of these values, or none of `not`. */
+  when?: { key: string; is?: string[]; not?: string[] };
 }
 
-export type StepCategory = 'Cells' | 'Format' | 'Sheets' | 'Logic' | 'Talk' | 'Workbook';
+export type StepCategory = 'Cells' | 'Format' | 'Sheets' | 'Variables' | 'Logic' | 'Talk' | 'Workbook';
+
+/** A name a block makes available to the steps inside it, like {Row}. */
+export interface Provided {
+  name: string;
+  hint: string;
+}
 
 export interface StepDef {
   type: string;
@@ -41,8 +49,10 @@ export interface StepDef {
   fields: StepField[];
   block?: boolean;
   hasElse?: boolean;
-  /** Variable made available to the steps inside (shown as a chip). */
-  provides?: string;
+  /** Names the steps inside can use (shown as chips). */
+  provides?: Provided[];
+  /** The field naming the variable this step stores something in. */
+  sets?: string;
   compile(a: Record<string, string>, c: Compiler, step: Step): string[];
 }
 
@@ -72,6 +82,40 @@ const COLORS: [string, string][] = [
 ];
 
 const range = (key = 'range', label = 'Cells', dflt = 'A1'): StepField => ({ key, label, kind: 'range', dflt, placeholder: 'A1 or A1:C10' });
+const variable = (dflt = 'Total', key = 'name', label = 'Variable'): StepField => ({ key, label, kind: 'variable', dflt });
+/** A comparison's value, hidden for "is empty" and "is not empty". */
+const compareValue = (key = 'value', opKey = 'op', dflt?: string): StepField => ({ key, label: 'Value', kind: 'text', optional: true, dflt, placeholder: 'Text, a number, {Variable} or [B2]', when: { key: opKey, not: ['empty', 'notempty'] } });
+/** The left side of a rule: a cell, or a {Variable}. */
+const subject = (key = 'range', dflt = 'A1'): StepField => ({ key, label: 'Cell or {Variable}', kind: 'range', dflt, placeholder: 'A1 or {Total}' });
+
+const NUMBER_HINT = 'A number, {Variable} or [B2]';
+
+const MATH: [string, string][] = [
+  ['add', 'add'],
+  ['sub', 'subtract'],
+  ['mul', 'multiply by'],
+  ['div', 'divide by'],
+  ['pow', 'raise to the power of'],
+  ['mod', 'keep the remainder after dividing by'],
+  ['round', 'round to decimal places:'],
+  ['int', 'drop the decimals'],
+  ['abs', 'make it positive'],
+  ['atmost', 'limit it to at most'],
+  ['atleast', 'limit it to at least'],
+];
+
+const TEXT_OPS: [string, string][] = [
+  ['append', 'add to the end:'],
+  ['prepend', 'add to the start:'],
+  ['replace', 'replace'],
+  ['remove', 'remove'],
+  ['upper', 'make it UPPERCASE'],
+  ['lower', 'make it lowercase'],
+  ['proper', 'Capitalize Each Word'],
+  ['trim', 'remove extra spaces'],
+  ['left', 'keep the first characters:'],
+  ['right', 'keep the last characters:'],
+];
 
 // ---------- the step catalog ----------
 
@@ -83,7 +127,7 @@ export const STEPS: StepDef[] = [
     title: 'Set cells',
     sentence: 'Set {range} to {value}',
     icon: 'pencil',
-    fields: [range(), { key: 'value', label: 'Value', kind: 'text', placeholder: 'Text, a number, or a formula like =SUM(A1:A5)' }],
+    fields: [range(), { key: 'value', label: 'Value', kind: 'text', placeholder: 'Text, a number, {Variable} or a formula like =SUM(A1:A5)' }],
     compile: (a, c) => {
       const v = c.value(a.value);
       return [`${c.range(a.range)}.${v.formula ? 'Formula' : 'Value'} = ${v.expr}`];
@@ -107,10 +151,10 @@ export const STEPS: StepDef[] = [
     title: 'Add to a number',
     sentence: 'Add {amount} to {range}',
     icon: 'plus',
-    fields: [{ key: 'amount', label: 'Amount', kind: 'number', dflt: '1' }, range('range', 'Cell')],
+    fields: [{ key: 'amount', label: 'Amount', kind: 'number', dflt: '1', placeholder: NUMBER_HINT }, range('range', 'Cell')],
     compile: (a, c) => {
       const r = c.range(a.range);
-      return [`${r}.Value = Val(${r}.Value) + ${c.num(a.amount)}`];
+      return [`${r}.Value = ${c.number(`${r}.Value`)} + ${c.num(a.amount)}`];
     },
   },
   {
@@ -205,18 +249,13 @@ export const STEPS: StepDef[] = [
     title: 'Delete rows that match',
     sentence: 'Delete rows in {range} where column {column} {op} {value}',
     icon: 'trash-2',
-    fields: [
-      range('range', 'Table', 'A2:D100'),
-      { key: 'column', label: 'Column', kind: 'column', dflt: 'A' },
-      { key: 'op', label: 'Rule', kind: 'choice', options: COMPARE, dflt: '=' },
-      { key: 'value', label: 'Value', kind: 'text', optional: true },
-    ],
+    fields: [range('range', 'Table', 'A2:D100'), { key: 'column', label: 'Column', kind: 'column', dflt: 'A' }, { key: 'op', label: 'Rule', kind: 'choice', options: COMPARE, dflt: '=' }, compareValue()],
     compile: (a, c) => {
       const r = c.range(a.range);
       const i = c.temp('i');
-      const cell = `${r}.Cells(${i}, ${c.columnIndexIn(a.column, a.range)})`;
+      const cell = `${r}.Cells(${i}, ${c.columnIndexIn(a.column, a.range)}).Value`;
       // Bottom to top, so deleting a row doesn't skip the next one
-      return [`For ${i} = ${r}.Rows.Count To 1 Step -1`, `    If ${c.condition(cell, a.op, a.value)} Then ${r}.Rows(${i}).EntireRow.Delete`, `Next ${i}`];
+      return [`For ${i} = ${r}.Rows.Count To 1 Step -1`, `    If ${c.test(cell, a.op, a.value)} Then ${r}.Rows(${i}).EntireRow.Delete`, `Next ${i}`];
     },
   },
   {
@@ -225,7 +264,10 @@ export const STEPS: StepDef[] = [
     title: 'Insert rows',
     sentence: 'Insert {count} row(s) above row {row}',
     icon: 'between-horizontal-start',
-    fields: [{ key: 'count', label: 'How many', kind: 'number', dflt: '1' }, { key: 'row', label: 'Above row', kind: 'number', dflt: '2' }],
+    fields: [
+      { key: 'count', label: 'How many', kind: 'number', dflt: '1', placeholder: NUMBER_HINT },
+      { key: 'row', label: 'Above row', kind: 'number', dflt: '2', placeholder: NUMBER_HINT },
+    ],
     compile: (a, c) => [`Rows(${c.num(a.row)} & ":" & ${c.num(a.row)} + ${c.num(a.count)} - 1).Insert`],
   },
   {
@@ -246,7 +288,7 @@ export const STEPS: StepDef[] = [
     fields: [range()],
     compile: (a, c) => {
       const sheet = c.sheetOf(a.range);
-      return [...(sheet ? [`Worksheets(${c.str(sheet)}).Activate`] : []), `${c.range(a.range)}.Select`];
+      return [...(sheet ? [`Worksheets(${c.text(sheet)}).Activate`] : []), `${c.range(a.range)}.Select`];
     },
   },
 
@@ -345,12 +387,12 @@ export const STEPS: StepDef[] = [
     title: 'Highlight matching cells',
     sentence: 'Color cells in {range} that {op} {value} {color}',
     icon: 'highlighter',
-    fields: [range('range', 'Cells', 'B2:B100'), { key: 'op', label: 'Rule', kind: 'choice', options: COMPARE, dflt: '>' }, { key: 'value', label: 'Value', kind: 'text', optional: true, dflt: '100' }, { key: 'color', label: 'Color', kind: 'color', options: COLORS, dflt: '#fef08a' }],
+    fields: [range('range', 'Cells', 'B2:B100'), { key: 'op', label: 'Rule', kind: 'choice', options: COMPARE, dflt: '>' }, compareValue('value', 'op', '100'), { key: 'color', label: 'Color', kind: 'color', options: COLORS, dflt: '#fef08a' }],
     compile: (a, c) => {
       const cell = c.temp('cell', 'Range');
       return [
         `For Each ${cell} In ${c.range(a.range)}.Cells`,
-        `    If ${c.condition(cell, a.op, a.value)} Then ${a.color === 'none' ? `${cell}.Interior.ColorIndex = xlNone` : `${cell}.Interior.Color = ${c.color(a.color)}`}`,
+        `    If ${c.test(`${cell}.Value`, a.op, a.value)} Then ${a.color === 'none' ? `${cell}.Interior.ColorIndex = xlNone` : `${cell}.Interior.Color = ${c.color(a.color)}`}`,
         `Next ${cell}`,
       ];
     },
@@ -412,18 +454,229 @@ export const STEPS: StepDef[] = [
     compile: (a, c) => [`Worksheets(${c.text(a.sheet)}).Delete`],
   },
 
+  // Variables
+  {
+    type: 'setVar',
+    category: 'Variables',
+    title: 'Set a variable',
+    sentence: 'Set {name} to {value}',
+    icon: 'variable',
+    sets: 'name',
+    fields: [variable(), { key: 'value', label: 'Value', kind: 'text', optional: true, placeholder: 'Text, a number, [B2] for a cell, or a formula like ={Price}*2' }],
+    compile: (a, c) => {
+      const value = c.value(a.value, true).expr;
+      return [`${c.setVariable(a.name)} = ${value}`];
+    },
+  },
+  {
+    type: 'mathVar',
+    category: 'Variables',
+    title: 'Change a number',
+    sentence: 'Change {name}: {op} {amount}',
+    icon: 'calculator',
+    sets: 'name',
+    fields: [variable(), { key: 'op', label: 'How', kind: 'choice', options: MATH, dflt: 'add' }, { key: 'amount', label: 'Amount', kind: 'number', dflt: '1', placeholder: NUMBER_HINT, when: { key: 'op', not: ['int', 'abs'] } }],
+    compile: (a, c) => {
+      const n = c.num(a.amount);
+      const v = c.setVariable(a.name);
+      const x = c.number(v);
+      switch (a.op) {
+        case 'sub':
+          return [`${v} = ${x} - ${n}`];
+        case 'mul':
+          return [`${v} = ${x} * ${n}`];
+        case 'div':
+          return [`${v} = ${x} / ${n}`];
+        case 'pow':
+          return [`${v} = ${x} ^ ${n}`];
+        case 'mod':
+          // Like the MOD function (VBA's Mod only works with whole numbers)
+          return [`${v} = ${x} - ${n} * Int(${x} / ${n})`];
+        case 'round':
+          // The spreadsheet ROUND (VBA's Round rounds 2.5 down to 2)
+          return [`${v} = WorksheetFunction.Round(${x}, ${n})`];
+        case 'int':
+          return [`${v} = Fix(${x})`];
+        case 'abs':
+          return [`${v} = Abs(${x})`];
+        case 'atmost':
+          return [`${v} = WorksheetFunction.Min(${x}, ${n})`];
+        case 'atleast':
+          return [`${v} = WorksheetFunction.Max(${x}, ${n})`];
+        default:
+          return [`${v} = ${x} + ${n}`];
+      }
+    },
+  },
+  {
+    type: 'textVar',
+    category: 'Variables',
+    title: 'Change text',
+    sentence: 'Change text in {name}: {op} {text}{count}',
+    icon: 'type',
+    sets: 'name',
+    fields: [
+      variable('Name'),
+      { key: 'op', label: 'How', kind: 'choice', options: TEXT_OPS, dflt: 'append' },
+      { key: 'text', label: 'Text', kind: 'text', optional: true, placeholder: 'Text or {Variable}', when: { key: 'op', is: ['append', 'prepend', 'replace', 'remove'] } },
+      { key: 'count', label: 'Characters', kind: 'number', dflt: '3', placeholder: NUMBER_HINT, when: { key: 'op', is: ['left', 'right'] } },
+      { key: 'with', label: 'With', kind: 'text', optional: true, placeholder: 'New text', when: { key: 'op', is: ['replace'] } },
+    ],
+    compile: (a, c) => {
+      const t = c.text(a.text);
+      const n = c.num(a.count);
+      const w = c.text(a.with);
+      const v = c.setVariable(a.name);
+      switch (a.op) {
+        case 'prepend':
+          return [`${v} = ${t} & ${v}`];
+        case 'replace':
+          return [`${v} = Replace(${v}, ${t}, ${w}, 1, -1, vbTextCompare)`];
+        case 'remove':
+          return [`${v} = Replace(${v}, ${t}, "", 1, -1, vbTextCompare)`];
+        case 'upper':
+          return [`${v} = UCase(${v})`];
+        case 'lower':
+          return [`${v} = LCase(${v})`];
+        case 'proper':
+          return [`${v} = StrConv(${v}, vbProperCase)`];
+        case 'trim':
+          // The spreadsheet TRIM also turns double spaces inside into one
+          return [`${v} = WorksheetFunction.Trim(${v})`];
+        case 'left':
+          return [`${v} = Left(${v}, ${n})`];
+        case 'right':
+          return [`${v} = Right(${v}, ${n})`];
+        default:
+          return [`${v} = ${v} & ${t}`];
+      }
+    },
+  },
+  {
+    type: 'dateVar',
+    category: 'Variables',
+    title: 'Change a date',
+    sentence: 'Change date {name}: {op} {amount} {unit}',
+    icon: 'calendar-plus',
+    sets: 'name',
+    fields: [
+      variable('Due'),
+      { key: 'op', label: 'How', kind: 'choice', options: [['add', 'add'], ['sub', 'subtract']], dflt: 'add' },
+      { key: 'amount', label: 'Amount', kind: 'number', dflt: '1', placeholder: NUMBER_HINT },
+      { key: 'unit', label: 'Unit', kind: 'choice', options: [['d', 'days'], ['wd', 'working days'], ['ww', 'weeks'], ['m', 'months'], ['yyyy', 'years']], dflt: 'd' },
+    ],
+    compile: (a, c) => {
+      const n = a.op === 'sub' ? `-(${c.num(a.amount)})` : c.num(a.amount);
+      const v = c.setVariable(a.name);
+      // A variable that was never set starts from today
+      const start = c.temp('start', 'Date');
+      const out = [`If IsEmpty(${v}) Then ${start} = Date Else ${start} = CDate(${v})`];
+      if (a.unit === 'wd') return [...out, `${v} = CDate(WorksheetFunction.WorkDay(${start}, ${n}))`];
+      return [...out, `${v} = DateAdd(${c.str(['d', 'ww', 'm', 'yyyy'].includes(a.unit) ? a.unit : 'd')}, ${n}, ${start})`];
+    },
+  },
+  {
+    type: 'measureVar',
+    category: 'Variables',
+    title: 'Get a total or count',
+    sentence: 'Remember the {what} of {range} as {name}',
+    icon: 'sigma',
+    sets: 'name',
+    fields: [
+      {
+        key: 'what',
+        label: 'What',
+        kind: 'choice',
+        options: [
+          ['sum', 'sum'],
+          ['average', 'average'],
+          ['max', 'largest value'],
+          ['min', 'smallest value'],
+          ['count', 'count of numbers'],
+          ['counta', 'count of filled cells'],
+          ['countblank', 'count of empty cells'],
+          ['lastrow', 'last row with data'],
+          ['nextrow', 'first empty row below the data'],
+        ],
+        dflt: 'sum',
+      },
+      range('range', 'Cells', 'B2:B100'),
+      variable(),
+    ],
+    compile: (a, c) => {
+      const r = c.range(a.range);
+      const v = c.setVariable(a.name);
+      if (a.what === 'lastrow' || a.what === 'nextrow') {
+        const last = `${c.sheetPrefix(a.range)}Cells(Rows.Count, ${r}.Column).End(xlUp).Row`;
+        if (a.what === 'lastrow') return [`${v} = ${last}`];
+        return [`${v} = ${last} + 1`, `If IsEmpty(${c.sheetPrefix(a.range)}Cells(1, ${r}.Column).Value) Then ${v} = 1`];
+      }
+      const fn = { sum: 'Sum', average: 'Average', max: 'Max', min: 'Min', count: 'Count', counta: 'CountA', countblank: 'CountBlank' }[a.what ?? 'sum'] ?? 'Sum';
+      // Application.Average gives #DIV/0! for no numbers instead of stopping the macro
+      return [`${v} = Application.${fn}(${r})`];
+    },
+  },
+  {
+    type: 'findVar',
+    category: 'Variables',
+    title: 'Find a value',
+    sentence: 'Find {find} in {range} and remember its {what} as {name}',
+    icon: 'search',
+    sets: 'name',
+    fields: [
+      { key: 'find', label: 'Find', kind: 'text', placeholder: 'Text, a number or {Variable}' },
+      range('range', 'In', 'A:A'),
+      { key: 'what', label: 'Remember', kind: 'choice', options: [['row', 'row number'], ['address', 'address'], ['right', 'value one cell to the right'], ['found', 'TRUE or FALSE (was it found?)']], dflt: 'row' },
+      variable('Found'),
+      { key: 'match', label: 'Match', kind: 'choice', options: [['whole', 'the whole cell'], ['part', 'part of the cell']], dflt: 'whole' },
+    ],
+    compile: (a, c) => {
+      const f = c.temp('found', 'Range');
+      const what = c.value(a.find, true).expr;
+      const v = c.setVariable(a.name);
+      const [missing, hit] =
+        a.what === 'address' ? ['""', `${f}.Address(False, False)`] : a.what === 'right' ? ['""', `${f}.Offset(0, 1).Value`] : a.what === 'found' ? ['False', 'True'] : ['0', `${f}.Row`];
+      return [
+        `Set ${f} = ${c.range(a.range)}.Find(What:=${what}, LookIn:=xlValues, LookAt:=${a.match === 'part' ? 'xlPart' : 'xlWhole'}, MatchCase:=False)`,
+        `If ${f} Is Nothing Then ${v} = ${missing} Else ${v} = ${hit}`,
+      ];
+    },
+  },
+  {
+    type: 'randomVar',
+    category: 'Variables',
+    title: 'Pick a random number',
+    sentence: 'Pick a random whole number from {from} to {to} as {name}',
+    icon: 'dices',
+    sets: 'name',
+    fields: [{ key: 'from', label: 'From', kind: 'number', dflt: '1', placeholder: NUMBER_HINT }, { key: 'to', label: 'To', kind: 'number', dflt: '6', placeholder: NUMBER_HINT }, variable('Roll')],
+    compile: (a, c) => {
+      const lo = c.num(a.from);
+      const hi = c.num(a.to);
+      return [`${c.setVariable(a.name)} = WorksheetFunction.RandBetween(${lo}, ${hi})`];
+    },
+  },
+
   // Logic
   {
     type: 'if',
     category: 'Logic',
     title: 'If',
-    sentence: 'If {range} {op} {value}',
+    sentence: 'If {range} {op} {value} {join} {range2} {op2} {value2}',
     icon: 'split',
     block: true,
     hasElse: true,
-    fields: [range('range', 'Cell'), { key: 'op', label: 'Rule', kind: 'choice', options: COMPARE, dflt: '=' }, { key: 'value', label: 'Value', kind: 'text', optional: true }],
+    fields: [
+      subject(),
+      { key: 'op', label: 'Rule', kind: 'choice', options: COMPARE, dflt: '=' },
+      compareValue(),
+      { key: 'join', label: 'Another rule', kind: 'choice', options: [['', '+ and/or'], ['and', 'and'], ['or', 'or']], dflt: '', optional: true },
+      { ...subject('range2', 'B1'), when: { key: 'join', is: ['and', 'or'] } },
+      { key: 'op2', label: 'Rule', kind: 'choice', options: COMPARE, dflt: '=', when: { key: 'join', is: ['and', 'or'] } },
+      { ...compareValue('value2', 'op2'), when: { key: 'join', is: ['and', 'or'] } },
+    ],
     compile: (a, c, step) => {
-      const out = [`If ${c.condition(c.range(a.range), a.op, a.value)} Then`, ...c.block(step.body)];
+      const out = [`If ${c.rules(a)} Then`, ...c.block(step.body)];
       if (step.elseBody?.length) out.push('Else', ...c.block(step.elseBody));
       out.push('End If');
       return out;
@@ -436,11 +689,29 @@ export const STEPS: StepDef[] = [
     sentence: 'Repeat {times} times',
     icon: 'repeat',
     block: true,
-    provides: 'Count',
-    fields: [{ key: 'times', label: 'Times', kind: 'number', dflt: '5' }],
+    provides: [{ name: 'Count', hint: 'the repeat number (1, 2, 3…)' }],
+    fields: [{ key: 'times', label: 'Times', kind: 'number', dflt: '5', placeholder: NUMBER_HINT }],
     compile: (a, c, step) => {
-      const i = c.loopVar('Count');
-      return [`For ${i} = 1 To ${c.num(a.times)}`, ...c.block(step.body), `Next ${i}`, ...c.endLoop('Count')];
+      const times = c.num(a.times);
+      const i = c.counter('n');
+      const body = c.loop('For', [{ name: 'Count', text: i, numeric: true }], step.body);
+      return [`For ${i} = 1 To ${times}`, ...body, `Next ${i}`];
+    },
+  },
+  {
+    type: 'repeatWhile',
+    category: 'Logic',
+    title: 'Repeat while…',
+    sentence: 'Repeat {mode} {range} {op} {value}',
+    icon: 'refresh-ccw',
+    block: true,
+    provides: [{ name: 'Count', hint: 'how many times it has repeated (1, 2, 3…)' }],
+    fields: [{ key: 'mode', label: 'Repeat', kind: 'choice', options: [['while', 'while'], ['until', 'until']], dflt: 'while' }, subject('range', '{Total}'), { key: 'op', label: 'Rule', kind: 'choice', options: COMPARE, dflt: '<' }, compareValue('value', 'op', '100')],
+    compile: (a, c, step) => {
+      const rule = c.rules(a);
+      const n = c.counter('n');
+      const body = c.loop('Do', [{ name: 'Count', text: n, numeric: true }], step.body);
+      return [`${n} = 0`, `Do ${a.mode === 'until' ? 'Until' : 'While'} ${rule}`, `    ${n} = ${n} + 1`, ...body, 'Loop'];
     },
   },
   {
@@ -450,17 +721,91 @@ export const STEPS: StepDef[] = [
     sentence: 'For each row from {from} to {to}',
     icon: 'rows-3',
     block: true,
-    provides: 'Row',
+    provides: [{ name: 'Row', hint: 'the row number, e.g. D{Row}' }],
     fields: [
-      { key: 'from', label: 'First row', kind: 'number', dflt: '2' },
+      { key: 'from', label: 'First row', kind: 'number', dflt: '2', placeholder: NUMBER_HINT },
       { key: 'to', label: 'Last row', kind: 'text', dflt: 'last', placeholder: 'A number, or "last" for the last row with data' },
       { key: 'column', label: 'Find the last row using column', kind: 'column', dflt: 'A', optional: true },
     ],
     compile: (a, c, step) => {
-      const r = c.loopVar('Row');
+      const from = c.num(a.from);
       const last = !a.to || /^last$/i.test(a.to.trim()) ? `Cells(Rows.Count, "${c.column(a.column || 'A')}").End(xlUp).Row` : c.num(a.to);
-      return [`For ${r} = ${c.num(a.from)} To ${last}`, ...c.block(step.body), `Next ${r}`, ...c.endLoop('Row')];
+      const r = c.counter('r');
+      const body = c.loop('For', [{ name: 'Row', text: r, numeric: true }], step.body);
+      return [`For ${r} = ${from} To ${last}`, ...body, `Next ${r}`];
     },
+  },
+  {
+    type: 'eachCell',
+    category: 'Logic',
+    title: 'For each cell',
+    sentence: 'For each cell in {range}',
+    icon: 'grid-3x3',
+    block: true,
+    provides: [
+      { name: 'Cell', hint: 'the cell, e.g. Set {Cell} to …' },
+      { name: 'Value', hint: 'what’s in it' },
+    ],
+    fields: [range('range', 'Cells', 'B2:B20')],
+    compile: (a, c, step) => {
+      const r = c.range(a.range);
+      const cell = c.counter('cell', 'Range');
+      const body = c.loop(
+        'For',
+        [
+          { name: 'Cell', text: `${cell}.Address(False, False)`, range: cell },
+          { name: 'Value', text: `${cell}.Value` },
+        ],
+        step.body,
+      );
+      return [`For Each ${cell} In ${r}.Cells`, ...body, `Next ${cell}`];
+    },
+  },
+  {
+    type: 'eachItem',
+    category: 'Logic',
+    title: 'For each item in a list',
+    sentence: 'For each item in {list}',
+    icon: 'list',
+    block: true,
+    provides: [{ name: 'Item', hint: 'the item' }],
+    fields: [
+      { key: 'list', label: 'List', kind: 'text', dflt: 'Jan, Feb, Mar', placeholder: 'Jan, Feb, Mar or {List}' },
+      { key: 'sep', label: 'Separated by', kind: 'choice', options: [[',', 'commas'], [';', 'semicolons'], ['|', 'bars ( | )'], [' ', 'spaces']], dflt: ',' },
+    ],
+    compile: (a, c, step) => {
+      const list = c.text(a.list);
+      const item = c.counter('item', 'Variant');
+      const body = c.loop('For', [{ name: 'Item', text: `Trim(${item})` }], step.body);
+      // Blank items ("a,,b" or a comma at the end) are skipped
+      return [`For Each ${item} In Split(${list}, ${c.str(a.sep || ',')})`, `    If Trim(${item}) <> "" Then`, ...body.map((l) => '    ' + l), '    End If', `Next ${item}`];
+    },
+  },
+  {
+    type: 'eachSheet',
+    category: 'Logic',
+    title: 'For each sheet',
+    sentence: 'For each sheet in the workbook',
+    icon: 'layers',
+    block: true,
+    provides: [{ name: 'Sheet', hint: 'the sheet’s name (steps inside work on that sheet)' }],
+    fields: [],
+    compile: (_a, c, step) => {
+      const ws = c.counter('ws', 'Worksheet');
+      const back = c.temp('startSheet', 'Worksheet');
+      const body = c.loop('For', [{ name: 'Sheet', text: `${ws}.Name` }], step.body);
+      // Hidden sheets are skipped; afterwards the sheet you started on is shown again
+      return [`Set ${back} = ActiveSheet`, `For Each ${ws} In Worksheets`, `    If ${ws}.Visible = xlSheetVisible Then`, `        ${ws}.Activate`, ...body.map((l) => '    ' + l), '    End If', `Next ${ws}`, `${back}.Activate`];
+    },
+  },
+  {
+    type: 'exitLoop',
+    category: 'Logic',
+    title: 'Stop repeating',
+    sentence: 'Stop repeating (leave the loop)',
+    icon: 'log-out',
+    fields: [],
+    compile: (_a, c) => [c.exitLoop()],
   },
   {
     type: 'runMacro',
@@ -486,17 +831,27 @@ export const STEPS: StepDef[] = [
     title: 'Wait',
     sentence: 'Wait {seconds} seconds',
     icon: 'hourglass',
-    fields: [{ key: 'seconds', label: 'Seconds', kind: 'number', dflt: '1' }],
+    fields: [{ key: 'seconds', label: 'Seconds', kind: 'number', dflt: '1', placeholder: NUMBER_HINT }],
     compile: (a, c) => [`Application.Wait Now + ${c.num(a.seconds)} / 86400`],
   },
   {
-    type: 'setVar',
+    type: 'onError',
     category: 'Logic',
-    title: 'Remember a value',
-    sentence: 'Remember {value} as {name}',
-    icon: 'variable',
-    fields: [{ key: 'value', label: 'Value', kind: 'text', placeholder: 'Text, a number, or a cell like [B2]' }, { key: 'name', label: 'Name', kind: 'variable', dflt: 'Total' }],
-    compile: (a, c) => [`${c.variable(a.name)} = ${c.value(a.value, true).expr}`],
+    title: 'If a step fails',
+    sentence: 'If a later step fails, {mode}',
+    icon: 'shield-alert',
+    fields: [{ key: 'mode', label: 'Then', kind: 'choice', options: [['skip', 'skip it and keep going'], ['stop', 'stop and show the error']], dflt: 'skip' }],
+    compile: (a) => [a.mode === 'stop' ? 'On Error GoTo 0' : 'On Error Resume Next'],
+  },
+  {
+    type: 'note',
+    category: 'Logic',
+    title: 'Note',
+    sentence: 'Note: {text}',
+    icon: 'sticky-note',
+    fields: [{ key: 'text', label: 'Note', kind: 'text', optional: true, placeholder: 'What the next steps do (for you, not run)' }],
+    // describeStep already writes it as a comment
+    compile: () => [],
   },
 
   // Talk
@@ -515,11 +870,13 @@ export const STEPS: StepDef[] = [
     title: 'Ask a question',
     sentence: 'Ask {question} and remember the answer as {name}',
     icon: 'message-circle-question',
+    sets: 'name',
     fields: [{ key: 'question', label: 'Question', kind: 'text', placeholder: 'How many rows?' }, { key: 'name', label: 'Remember as', kind: 'variable', dflt: 'Answer' }],
     compile: (a, c) => {
-      const v = c.variable(a.name);
+      const q = c.text(a.question);
+      const v = c.setVariable(a.name);
       // An empty answer (or Cancel) stops the macro
-      return [`${v} = InputBox(${c.text(a.question)})`, `If ${v} = "" Then End`];
+      return [`${v} = InputBox(${q})`, `If ${v} = "" Then End`];
     },
   },
   {
@@ -539,6 +896,15 @@ export const STEPS: StepDef[] = [
     icon: 'panel-bottom',
     fields: [{ key: 'text', label: 'Text', kind: 'text', placeholder: 'Working on row {Row}…' }],
     compile: (a, c) => [`Application.StatusBar = ${c.text(a.text)}`],
+  },
+  {
+    type: 'log',
+    category: 'Talk',
+    title: 'Write to the output',
+    sentence: 'Write {text} to the output panel',
+    icon: 'terminal',
+    fields: [{ key: 'text', label: 'Text', kind: 'text', placeholder: 'Total so far: {Total}' }],
+    compile: (a, c) => [`Debug.Print ${c.text(a.text)}`],
   },
 
   // Workbook
@@ -564,18 +930,33 @@ export const STEPS: StepDef[] = [
 
 export const STEP_BY_TYPE = new Map(STEPS.map((s) => [s.type, s]));
 
-export const STEP_CATEGORIES: StepCategory[] = ['Cells', 'Format', 'Sheets', 'Logic', 'Talk', 'Workbook'];
+export const STEP_CATEGORIES: StepCategory[] = ['Cells', 'Format', 'Sheets', 'Variables', 'Logic', 'Talk', 'Workbook'];
+
+/** Whether a field applies, given the other fields (the replacement text only matters for "replace"). */
+export function fieldShown(f: StepField, args: Record<string, string>, def: StepDef): boolean {
+  if (!f.when) return true;
+  const other = def.fields.find((x) => x.key === f.when!.key);
+  const v = args[f.when.key] ?? other?.dflt ?? '';
+  if (other && !fieldShown(other, args, def)) return false;
+  if (f.when.is && !f.when.is.includes(v)) return false;
+  if (f.when.not?.includes(v)) return false;
+  return true;
+}
 
 /** Fills in a step's sentence for the list ("Set A1 to 5"). */
 export function describeStep(step: Step): string {
   const def = STEP_BY_TYPE.get(step.type);
   if (!def) return `Unknown step "${step.type}"`;
-  return def.sentence.replace(/\{(\w+)\}/g, (_m, key: string) => {
-    const field = def.fields.find((f) => f.key === key);
-    const v = step.args[key] ?? field?.dflt ?? '';
-    if (field?.options) return field.options.find(([o]) => o === v)?.[1] ?? v;
-    return v === '' ? '…' : v;
-  });
+  return def.sentence
+    .replace(/\{(\w+)\}/g, (_m, key: string) => {
+      const field = def.fields.find((f) => f.key === key);
+      if (field && !fieldShown(field, step.args, def)) return '';
+      const v = step.args[key] ?? field?.dflt ?? '';
+      if (field?.options) return v === '' ? '' : (field.options.find(([o]) => o === v)?.[1] ?? v);
+      return v === '' ? '…' : v;
+    })
+    .replace(/ {2,}/g, ' ')
+    .trim();
 }
 
 export function newStep(type: string): Step {
@@ -594,18 +975,142 @@ export function macroProcName(name: string): string {
     .join('.');
 }
 
+/** The variable names (as typed) that steps store values in, in order, without repeats. */
+export function variablesSetIn(steps: Step[]): string[] {
+  const seen = new Map<string, string>();
+  const walk = (list: Step[]) => {
+    for (const s of list) {
+      const def = STEP_BY_TYPE.get(s.type);
+      const name = def?.sets ? (s.args[def.sets] ?? def.fields.find((f) => f.key === def.sets)?.dflt ?? '').trim() : '';
+      const id = varId(name).toLowerCase();
+      if (name && !seen.has(id)) seen.set(id, name);
+      walk(s.body ?? []);
+      walk(s.elseBody ?? []);
+    }
+  };
+  walk(steps);
+  return [...seen.values()];
+}
+
 // ---------- compiler ----------
 
 const IDENT = /[^A-Za-z0-9_]/g;
+const VAR_REF = /\{([A-Za-z][A-Za-z0-9 _]*)\}/g;
+const NUMBER = /^-?\d+(\.\d+)?$/;
+/** A cell or range address, maybe on another sheet, maybe with {Variables} for parts ("D{Row}"). */
+const CELLISH = /^(?:(?:'(?:[^']|'')+'|[^!'"\s]+)!)?\$?[A-Za-z]{1,3}\$?(?:\d+|\{[^}]+\})(?::\$?[A-Za-z]{1,3}\$?(?:\d+|\{[^}]+\}))?$/;
+
+const varId = (name: string) => 'v_' + name.trim().replace(IDENT, '_');
+
+/** A name a loop makes available, and what it means as text and (for {Cell}) as a range. */
+interface LoopName {
+  name: string;
+  text: string;
+  range?: string;
+  /** Already a number (loop counters), so it needs no converting. */
+  numeric?: boolean;
+}
+
+// Small functions added to the generated code when steps need them (shown with "Show code", so the
+// code still works when pasted into Excel).
+const HELPERS: Record<string, string> = {
+  StepNumber: `Private Function StepNumber(ByVal v As Variant) As Double
+    ' A value as a number ("1,200" and "$5" work too); anything else counts as 0
+    If IsError(v) Then
+        StepNumber = 0
+    ElseIf IsNumeric(v) Then
+        StepNumber = CDbl(v)
+    ElseIf IsDate(v) Then
+        StepNumber = CDbl(CDate(v))
+    End If
+End Function`,
+  StepTest: `Private Function StepTest(ByVal a As Variant, ByVal op As String, ByVal b As Variant) As Boolean
+    ' Compares the way a person would: numbers as numbers, dates as dates, text ignoring case
+    Dim d As Double
+    If IsError(a) Or IsError(b) Then Exit Function
+    Select Case op
+        Case "empty"
+            StepTest = Trim(CStr(a)) = ""
+            Exit Function
+        Case "notempty"
+            StepTest = Trim(CStr(a)) <> ""
+            Exit Function
+        Case "contains"
+            StepTest = InStr(1, CStr(a), CStr(b), vbTextCompare) > 0
+            Exit Function
+    End Select
+    If IsNumeric(b) And Trim(CStr(b)) <> "" And VarType(b) <> vbBoolean Then
+        ' Blank cells and text are never compared with a number
+        If Not IsNumeric(a) Or Trim(CStr(a)) = "" Then Exit Function
+        d = CDbl(a) - CDbl(b)
+    ElseIf IsDate(a) And IsDate(b) Then
+        d = CDbl(CDate(a)) - CDbl(CDate(b))
+    Else
+        d = StrComp(Trim(CStr(a)), Trim(CStr(b)), vbTextCompare)
+    End If
+    Select Case op
+        Case "<>"
+            StepTest = d <> 0
+        Case ">"
+            StepTest = d > 0
+        Case "<"
+            StepTest = d < 0
+        Case ">="
+            StepTest = d >= 0
+        Case "<="
+            StepTest = d <= 0
+        Case Else
+            StepTest = d = 0
+    End Select
+End Function`,
+  StepLiteral: `Private Function StepLiteral(ByVal v As Variant) As String
+    ' A value written the way a formula needs it: numbers as they are, text in quotes
+    If IsEmpty(v) Then
+        StepLiteral = "0"
+    ElseIf IsError(v) Then
+        StepLiteral = "NA()"
+    ElseIf VarType(v) = vbBoolean Then
+        StepLiteral = IIf(v, "TRUE", "FALSE")
+    ElseIf VarType(v) = vbDate Then
+        StepLiteral = Trim(Str(CDbl(v)))
+    ElseIf VarType(v) = vbString Then
+        StepLiteral = """" & Replace(v, """", """""") & """"
+        ' Numbers typed as text (an answer to a question) count as numbers, but "007" stays text
+        If IsNumeric(v) Then
+            If CStr(CDbl(v)) = Trim(v) Then StepLiteral = Trim(Str(CDbl(v)))
+        End If
+    Else
+        StepLiteral = Trim(Str(v))
+    End If
+End Function`,
+};
+
+/** VBA for the helper functions with these names. */
+export function stepHelperCode(names: Iterable<string>): string {
+  const want = new Set(names);
+  return Object.keys(HELPERS)
+    .filter((n) => want.has(n))
+    .map((n) => HELPERS[n].replace(/\n/g, '\r\n'))
+    .join('\r\n\r\n');
+}
 
 /** Turns steps into VBA. One instance compiles one macro. */
 export class Compiler {
   private temps = new Map<string, string>();
-  private loops: { name: string; v: string }[] = [];
+  private typed = new Map<string, string>();
+  private loops: { kind: 'For' | 'Do'; names: LoopName[] }[] = [];
   private loopCount = 0;
   private vars = new Set<string>();
-  private depth = 1;
+  /** Variables (VBA names) that steps store something in, and the ones text refers to. */
+  private setVars = new Set<string>();
+  private usedVars = new Map<string, string>();
+  readonly helpers = new Set<string>();
   readonly problems: string[] = [];
+
+  /** `known`: the variables the whole macro sets, so a loop can use one that's set further down. */
+  constructor(known: string[] = []) {
+    for (const name of known) this.setVars.add(varId(name).toLowerCase());
+  }
 
   /** A VBA string literal. */
   str(s: string): string {
@@ -617,7 +1122,7 @@ export class Compiler {
     const src = s ?? '';
     const parts: string[] = [];
     let last = 0;
-    for (const m of src.matchAll(/\{([A-Za-z][A-Za-z0-9 _]*)\}/g)) {
+    for (const m of src.matchAll(VAR_REF)) {
       if (m.index! > last) parts.push(this.str(src.slice(last, m.index)));
       parts.push(this.ref(m[1]));
       last = m.index! + m[0].length;
@@ -626,13 +1131,42 @@ export class Compiler {
     return parts.join(' & ');
   }
 
-  /** A value typed by the user: a number, TRUE/FALSE, a formula, [A1] for a cell's value, or text. */
+  /**
+   * A formula with {Variables} as a VBA string expression. A variable becomes a value the formula
+   * understands: "Sam" in quotes, 5 as a number. Where it's part of a reference (B{Row}, {Sheet}!A1)
+   * or inside quotes in the formula, its text goes in as it is.
+   */
+  formula(s: string): string {
+    const parts: string[] = [];
+    let last = 0;
+    for (const m of s.matchAll(VAR_REF)) {
+      const at = m.index!;
+      if (at > last) parts.push(this.str(s.slice(last, at)));
+      const x = this.ref(m[1]);
+      const before = s.slice(0, at);
+      const prev = before.slice(-1);
+      const next = s.charAt(at + m[0].length);
+      const inQuotes = (before.match(/"/g)?.length ?? 0) % 2 === 1;
+      if (inQuotes) parts.push(`Replace(${x}, """", """""")`);
+      else if (next === '!') parts.push(`"'" & Replace(${x}, "'", "''") & "'"`);
+      else if (/[A-Za-z$:]/.test(prev) || /[0-9:$]/.test(next)) parts.push(x);
+      else parts.push(`${this.helper('StepLiteral')}(${x})`);
+      last = at + m[0].length;
+    }
+    if (last < s.length || !parts.length) parts.push(this.str(s.slice(last)));
+    return parts.join(' & ');
+  }
+
+  /**
+   * A value typed by the user: a number, TRUE/FALSE, a formula, [A1] for a cell's value, a {Variable},
+   * or text. For variables a formula is calculated (=ROUND({Total}, 2)); for cells it's put in the cell.
+   */
   value(s: string | undefined, forVariable = false): { expr: string; formula: boolean } {
     const t = (s ?? '').trim();
     if (t === '') return { expr: forVariable ? '""' : 'Empty', formula: false };
-    if (/^-?\d+(\.\d+)?$/.test(t)) return { expr: t, formula: false };
+    if (NUMBER.test(t)) return { expr: t, formula: false };
     if (/^(true|false)$/i.test(t)) return { expr: t[0].toUpperCase() + t.slice(1).toLowerCase(), formula: false };
-    if (t.startsWith('=') && !forVariable) return { expr: this.text(t), formula: true };
+    if (t.startsWith('=')) return forVariable ? { expr: `Evaluate(${this.formula(t.slice(1))})`, formula: false } : { expr: this.formula(t), formula: true };
     const cell = /^\[([^\]]+)\]$/.exec(t);
     if (cell) return { expr: `${this.range(cell[1])}.Value`, formula: false };
     const single = /^\{([A-Za-z][A-Za-z0-9 _]*)\}$/.exec(t);
@@ -640,12 +1174,20 @@ export class Compiler {
     return { expr: this.text(s), formula: false };
   }
 
-  /** A number field, which may be a {Variable}. */
+  /** A number field: a number, a {Variable}, [B2] or a formula. */
   num(s: string | undefined): string {
     const t = (s ?? '').trim();
-    if (/^-?\d+(\.\d+)?$/.test(t)) return t;
+    if (NUMBER.test(t)) return t;
     if (t === '') return '0';
-    return `Val(${this.text(t)})`;
+    const single = /^\{([A-Za-z][A-Za-z0-9 _]*)\}$/.exec(t);
+    const loop = single && this.loopName(single[1]);
+    if (loop && loop.numeric) return loop.text;
+    return this.number(this.value(t, true).expr);
+  }
+
+  /** An expression converted to a number. */
+  number(expr: string): string {
+    return `${this.helper('StepNumber')}(${expr})`;
   }
 
   /** The sheet named in "Sheet2!A1", if any. */
@@ -656,19 +1198,57 @@ export class Compiler {
 
   sheetPrefix(addr: string | undefined): string {
     const sheet = this.sheetOf(addr);
-    return sheet ? `Worksheets(${this.str(sheet)}).` : '';
+    return sheet ? `Worksheets(${this.text(sheet)}).` : '';
   }
 
-  /** Range("A1"), Worksheets("Data").Range("B2:B9") or Range("C" & r1) with {Row}. */
+  /** Range("A1"), Worksheets("Data").Range("B2:B9"), Range("C" & r1) with {Row}, or the cell of a loop. */
   range(addr: string | undefined): string {
     let a = (addr ?? '').trim();
     if (!a) {
       this.problems.push('A step is missing its cells.');
       a = 'A1';
     }
+    const single = /^\{([A-Za-z][A-Za-z0-9 _]*)\}$/.exec(a);
+    const loop = single && this.loopName(single[1]);
+    if (loop && loop.range) return loop.range;
     const sheet = this.sheetOf(a);
     const local = sheet ? a.slice(a.indexOf('!') + 1) : a;
-    return `${sheet ? `Worksheets(${this.str(sheet)}).` : ''}Range(${this.text(local.replace(/\$/g, ''))})`;
+    return `${sheet ? `Worksheets(${this.text(sheet)}).` : ''}Range(${this.text(local.replace(/\$/g, ''))})`;
+  }
+
+  /** What a rule checks: a cell's value (A1, D{Row}, [B2]) or a {Variable}. */
+  subject(raw: string | undefined): string {
+    const t = (raw ?? '').trim();
+    if (!t) {
+      this.problems.push('A rule is missing the cell or {Variable} to check.');
+      return 'Empty';
+    }
+    const single = /^\{([A-Za-z][A-Za-z0-9 _]*)\}$/.exec(t);
+    if (single) {
+      const loop = this.loopName(single[1]);
+      if (loop?.range) return `${loop.range}.Value`;
+      if (/^today$/i.test(single[1].trim())) return 'Date';
+      if (/^now$/i.test(single[1].trim())) return 'Now';
+      return this.ref(single[1]);
+    }
+    if (CELLISH.test(t)) return `${this.range(t)}.Value`;
+    if (/^\[[^\]]+\]$/.test(t)) return this.value(t, true).expr;
+    if (/^[A-Za-z][A-Za-z0-9 _]*$/.test(t)) this.problems.push(`"${t}" isn't a cell. To check a variable, write {${t}}.`);
+    return this.value(t, true).expr;
+  }
+
+  /** A rule comparing a value (VBA expression) with what the user typed. */
+  test(valueExpr: string, op: string | undefined, raw: string | undefined): string {
+    const o = COMPARE.some(([v]) => v === op) ? op! : '=';
+    const rhs = o === 'empty' || o === 'notempty' ? '""' : o === 'contains' ? this.text(raw) : this.value(raw, true).expr;
+    return `${this.helper('StepTest')}(${valueExpr}, ${this.str(o)}, ${rhs})`;
+  }
+
+  /** The rule(s) of an If or Repeat while: one, or two joined by And/Or. */
+  rules(a: Record<string, string>): string {
+    const first = this.test(this.subject(a.range), a.op, a.value);
+    if (a.join !== 'and' && a.join !== 'or') return first;
+    return `${first} ${a.join === 'and' ? 'And' : 'Or'} ${this.test(this.subject(a.range2), a.op2, a.value2)}`;
   }
 
   /** Column letters from "B", "Sheet2!B" or "B:B". */
@@ -699,39 +1279,51 @@ export class Compiler {
     return `RGB(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255})`;
   }
 
-  /** Condition comparing a cell (expression) with a typed value. */
-  condition(cellExpr: string, op: string | undefined, raw: string | undefined): string {
-    const v = `${cellExpr}.Value`;
-    if (op === 'empty') return `Trim(CStr(${v})) = ""`;
-    if (op === 'notempty') return `Trim(CStr(${v})) <> ""`;
-    if (op === 'contains') return `InStr(1, CStr(${v}), ${this.text(raw)}, vbTextCompare) > 0`;
-    const t = (raw ?? '').trim();
-    const numeric = /^-?\d+(\.\d+)?$/.test(t);
-    const rhs = numeric ? t : this.value(raw, true).expr;
-    const sym = ['=', '<>', '>', '<', '>=', '<='].includes(op ?? '') ? op : '=';
-    if (numeric) return `IsNumeric(${v}) And Not IsEmpty(${v}) And ${v} ${sym} ${rhs}`;
-    if (sym === '=' || sym === '<>') return `LCase(CStr(${v})) ${sym} LCase(${rhs})`;
-    return `${v} ${sym} ${rhs}`;
-  }
-
   /** A user variable ({Total} → v_Total). */
   variable(name: string | undefined): string {
-    const id = 'v_' + (name ?? 'Value').trim().replace(IDENT, '_');
+    const id = varId(name || 'Value');
     this.vars.add(id);
     return id;
   }
 
-  /** {Name} inside text: loop counters, {Today}/{Now}, or a remembered value. */
+  /** A variable a step stores something in. */
+  setVariable(name: string | undefined): string {
+    if (!(name ?? '').trim()) this.problems.push('A step is missing the name of its variable.');
+    const id = this.variable(name);
+    this.setVars.add(id.toLowerCase());
+    return id;
+  }
+
+  /** A helper function the code needs (see HELPERS). */
+  helper(name: string): string {
+    this.helpers.add(name);
+    return name;
+  }
+
+  private loopName(name: string): LoopName | undefined {
+    const n = name.trim().toLowerCase();
+    for (let i = this.loops.length - 1; i >= 0; i--) {
+      const hit = this.loops[i].names.find((l) => l.name.toLowerCase() === n);
+      if (hit) return hit;
+    }
+    return undefined;
+  }
+
+  /** {Name} inside text: what a loop provides, {Today}/{Now}, or a variable. */
   private ref(name: string): string {
     const n = name.trim();
-    for (let i = this.loops.length - 1; i >= 0; i--) if (this.loops[i].name.toLowerCase() === n.toLowerCase()) return this.loops[i].v;
+    const loop = this.loopName(n);
+    if (loop) return loop.text;
     if (/^today$/i.test(n)) return 'Format(Date, "m/d/yyyy")';
     if (/^now$/i.test(n)) return 'Format(Now, "m/d/yyyy h:mm AM/PM")';
-    if (/^(row|count)$/i.test(n)) {
-      this.problems.push(`{${n}} only works inside a "${/^row$/i.test(n) ? 'For each row' : 'Repeat'}" block.`);
+    const id = this.variable(n);
+    const provider = STEPS.find((d) => d.provides?.some((p) => p.name.toLowerCase() === n.toLowerCase()));
+    if (provider && !this.setVars.has(id.toLowerCase())) {
+      this.problems.push(`{${n}} only works inside a "${provider.title}" block.`);
       return '0';
     }
-    return this.variable(n);
+    if (!this.usedVars.has(id.toLowerCase())) this.usedVars.set(id.toLowerCase(), n);
+    return id;
   }
 
   /** A helper variable declared once per macro. */
@@ -739,36 +1331,47 @@ export class Compiler {
     const key = base + (type ?? '');
     let v = this.temps.get(key);
     if (!v) {
-      v = `${base}${this.temps.size ? this.temps.size + 1 : ''}`;
+      let n = this.temps.size;
+      do v = `${base}${n ? n + 1 : ''}`;
+      while (this.typed.has(v) && ++n);
       this.temps.set(key, v);
-      this.typed.set(v, base === 'cols' ? '()' : type ?? 'Long');
+      this.typed.set(v, base === 'cols' ? '()' : (type ?? 'Long'));
     }
     return v;
   }
 
-  private typed = new Map<string, string>();
-
-  loopVar(name: string): string {
-    const v = `${name === 'Row' ? 'r' : 'n'}${++this.loopCount}`;
-    this.typed.set(v, 'Long');
-    this.loops.push({ name, v });
+  /** A new loop variable (r1, n2, cell3…). */
+  counter(base: string, type = 'Long'): string {
+    let v: string;
+    do v = `${base}${++this.loopCount}`;
+    while (this.typed.has(v));
+    this.typed.set(v, type);
     return v;
   }
 
-  endLoop(name: string): string[] {
-    const i = this.loops.map((l) => l.name).lastIndexOf(name);
-    if (i >= 0) this.loops.splice(i, 1);
-    return [];
+  /** Compiles a loop's steps with the names it provides. */
+  loop(kind: 'For' | 'Do', names: LoopName[], steps: Step[] | undefined): string[] {
+    this.loops.push({ kind, names });
+    try {
+      return this.block(steps);
+    } finally {
+      this.loops.pop();
+    }
+  }
+
+  /** Leaves the innermost loop. */
+  exitLoop(): string {
+    const inner = this.loops[this.loops.length - 1];
+    if (!inner) {
+      this.problems.push('"Stop repeating" only works inside Repeat or For each.');
+      return "' (not inside a loop)";
+    }
+    return `Exit ${inner.kind}`;
   }
 
   block(steps: Step[] | undefined): string[] {
-    this.depth++;
-    try {
-      const out = this.steps(steps ?? []);
-      return out.length ? out.map((l) => '    ' + l) : ["    ' (nothing yet)"];
-    } finally {
-      this.depth--;
-    }
+    const out = this.steps(steps ?? []);
+    return out.length ? out.map((l) => '    ' + l) : ["    ' (nothing yet)"];
   }
 
   steps(steps: Step[]): string[] {
@@ -786,6 +1389,21 @@ export class Compiler {
     return out;
   }
 
+  /** Variables used in text but never given a value, with a guess at what was meant. */
+  checkVariables(): void {
+    const known = [...this.setVars];
+    for (const [id, name] of this.usedVars) {
+      if (this.setVars.has(id)) continue;
+      const guess = known.find((k) => close(k, id));
+      this.problems.push(`{${name}} is used but never set.${guess ? ` Did you mean {${this.displayName(guess)}}?` : ' Add a "Set a variable" step before it.'}`);
+    }
+  }
+
+  private displayName(id: string): string {
+    for (const v of this.vars) if (v.toLowerCase() === id) return v.slice(2).replace(/_/g, ' ');
+    return id.slice(2);
+  }
+
   /** Declarations for the variables the compiled steps use. */
   declarations(): string[] {
     const out: string[] = [];
@@ -795,10 +1413,27 @@ export class Compiler {
   }
 }
 
-/** The VBA for one step macro, as a Sub named `procName`. */
-export function compileStepMacro(procName: string, steps: Step[], description?: string): { code: string; problems: string[] } {
-  const c = new Compiler();
+/** Names that differ by a typo: one letter added, dropped, changed or two swapped. */
+function close(a: string, b: string): boolean {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+  return d[a.length][b.length] <= (a.length > 5 ? 2 : 1);
+}
+
+/**
+ * The VBA for one step macro, as a Sub named `procName`. `helpers` names the helper functions it
+ * calls; put stepHelperCode(helpers) once in the same module.
+ */
+export function compileStepMacro(procName: string, steps: Step[], description?: string): { code: string; problems: string[]; helpers: string[] } {
+  const c = new Compiler(variablesSetIn(steps));
   const body = c.steps(steps);
+  c.checkVariables();
   const lines = [`Sub ${procName}()`];
   if (description) lines.push(`    ' ${description.replace(/\r?\n/g, ' ')}`);
   for (const d of c.declarations()) lines.push('    ' + d);
@@ -806,7 +1441,7 @@ export function compileStepMacro(procName: string, steps: Step[], description?: 
   for (const l of body) lines.push('    ' + l);
   lines.push('    Application.StatusBar = False');
   lines.push('End Sub');
-  return { code: lines.join('\r\n'), problems: c.problems };
+  return { code: lines.join('\r\n'), problems: [...new Set(c.problems)], helpers: [...c.helpers] };
 }
 
 /** Ready-made step macros shown as examples in the builder. */
@@ -838,9 +1473,34 @@ export const STEP_EXAMPLES: { name: string; description: string; steps: () => St
     },
   },
   {
+    name: 'Add up paid amounts',
+    description: 'Adds up column C for the rows marked "Paid" in column D, and shows the total.',
+    steps: () => {
+      const loop = withArgs(newStep('eachRow'), { from: '2', to: 'last', column: 'A' });
+      const cond = withArgs(newStep('if'), { range: 'D{Row}', op: '=', value: 'Paid' });
+      cond.body = [withArgs(newStep('mathVar'), { name: 'Paid', op: 'add', amount: '[C{Row}]' }), withArgs(newStep('mathVar'), { name: 'Rows', op: 'add', amount: '1' })];
+      loop.body = [cond];
+      return [
+        withArgs(newStep('setVar'), { name: 'Paid', value: '0' }),
+        withArgs(newStep('setVar'), { name: 'Rows', value: '0' }),
+        loop,
+        withArgs(newStep('message'), { text: '{Rows} paid rows, {Paid} in total' }),
+      ];
+    },
+  },
+  {
     name: 'Monthly report sheet',
     description: 'Asks for a month, copies the Template sheet and names it after the month.',
     steps: () => [withArgs(newStep('ask'), { question: 'Which month is this report for?', name: 'Month' }), withArgs(newStep('copySheet'), { sheet: 'Template', name: '{Month}' })],
+  },
+  {
+    name: 'A sheet per quarter',
+    description: 'Adds a sheet for each name in a list (Q1 to Q4) with a heading in A1.',
+    steps: () => {
+      const loop = withArgs(newStep('eachItem'), { list: 'Q1, Q2, Q3, Q4', sep: ',' });
+      loop.body = [withArgs(newStep('addSheet'), { name: '{Item}' }), withArgs(newStep('setValue'), { range: 'A1', value: '{Item} report' }), withArgs(newStep('fontStyle'), { range: 'A1', style: 'bold' })];
+      return [loop];
+    },
   },
 ];
 

@@ -6,7 +6,7 @@ import type { Sheet } from '../workbook';
 import { MacroSession, uniqueCodeName, type MacroUI } from './host';
 import { MacroProject, type MacroTrigger, type StepMacro, type TriggerEvent } from './project';
 import { RangeObj } from './range';
-import { compileStepMacro, macroProcName } from './steps';
+import { compileStepMacro, macroProcName, stepHelperCode } from './steps';
 import { VbaProgram, type CompileError, type MacroInfo, type ModuleSource } from './vba/interpreter';
 import { StopSignal, VbError, type Value } from './vba/values';
 
@@ -57,14 +57,16 @@ export function compiledProject(p: MacroProject | null | undefined): { program: 
   const sources: ModuleSource[] = project.modules.map((m) => ({ name: m.name, code: m.code, kind: m.kind === 'form' ? 'class' : m.kind }));
   const stepErrors: CompileError[] = [];
   if (project.stepMacros.length) {
-    const code = project.stepMacros
-      .map((m) => {
-        const out = compileStepMacro(macroProcName(m.name), m.steps, m.description);
-        for (const pr of out.problems) stepErrors.push({ module: m.name, line: 0, message: pr });
-        return out.code;
-      })
-      .join('\r\n\r\n');
-    sources.push({ name: STEPS_MODULE, code, kind: 'standard' });
+    const helpers = new Set<string>();
+    const subs = project.stepMacros.map((m) => {
+      const out = compileStepMacro(macroProcName(m.name), m.steps, m.description);
+      for (const pr of out.problems) stepErrors.push({ module: m.name, line: 0, message: pr });
+      for (const h of out.helpers) helpers.add(h);
+      return out.code;
+    });
+    // Helper functions the steps call, once for all step macros
+    if (helpers.size) subs.push(stepHelperCode(helpers));
+    sources.push({ name: STEPS_MODULE, code: subs.join('\r\n\r\n'), kind: 'standard' });
   }
   const entry = { version: project.version, program: new VbaProgram(sources), stepErrors };
   compiled.set(project, entry);
