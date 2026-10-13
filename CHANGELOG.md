@@ -17,6 +17,11 @@
 
 ## 1.0.5
 
+- **Your VBA functions work in cells.** A `Function` in a workbook's macros can be used in formulas, like in Excel: `=VAULTVALUE("Rent", "$")`, `=ESTTAX(B2)`.
+  - Cell references passed to `Variant` or `Range` parameters arrive as Range objects, so code can read `.NumberFormat`, `.Text` and more.
+  - Optional parameters, error values (`CVErr`), arrays that spill, `Application.Volatile` and `Application.Caller` all work.
+  - Like in Excel, these functions can read the whole workbook but not change it. They run only while the workbook's macros are on; until then, their cells show the values saved in the file.
+- `IsError(CVErr(…))` is now True, and a macro writing `CVErr(xlErrNA)` to a cell puts `#N/A` there instead of the number 2042.
 - **Tabs for workbooks.** Open several files in one window, each in its own tab at the top, like a web browser:
   - **Ctrl+N** opens a new workbook in a new tab;
   - files you open, from Gridline or from File Explorer, open in tabs too;

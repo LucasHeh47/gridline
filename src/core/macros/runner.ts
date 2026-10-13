@@ -42,9 +42,36 @@ export function ensureDocumentModules(doc: Doc): MacroProject {
   return project;
 }
 
+/**
+ * The compiled program for a workbook's macros (VBA modules plus step macros), compiled again only
+ * when the code changes. Macros and functions used in cells share it, so module-level variables
+ * are the same for both, like in Excel.
+ */
+const compiled = new WeakMap<MacroProject, { version: number; program: VbaProgram; stepErrors: CompileError[] }>();
+const NO_PROJECT = new MacroProject();
+
+export function compiledProject(p: MacroProject | null | undefined): { program: VbaProgram; stepErrors: CompileError[] } {
+  const project = p ?? NO_PROJECT;
+  const hit = compiled.get(project);
+  if (hit && hit.version === project.version) return hit;
+  const sources: ModuleSource[] = project.modules.map((m) => ({ name: m.name, code: m.code, kind: m.kind === 'form' ? 'class' : m.kind }));
+  const stepErrors: CompileError[] = [];
+  if (project.stepMacros.length) {
+    const code = project.stepMacros
+      .map((m) => {
+        const out = compileStepMacro(macroProcName(m.name), m.steps, m.description);
+        for (const pr of out.problems) stepErrors.push({ module: m.name, line: 0, message: pr });
+        return out.code;
+      })
+      .join('\r\n\r\n');
+    sources.push({ name: STEPS_MODULE, code, kind: 'standard' });
+  }
+  const entry = { version: project.version, program: new VbaProgram(sources), stepErrors };
+  compiled.set(project, entry);
+  return entry;
+}
+
 export class MacroRunner {
-  private cache: { version: number; program: VbaProgram; stepErrors: CompileError[] } | null = null;
-  private project: MacroProject | null = null;
   private current: MacroSession | null = null;
   /** Debug.Print output and run messages for the editor's output pane. */
   onPrint: (text: string) => void = () => undefined;
@@ -60,30 +87,13 @@ export class MacroRunner {
 
   /** The compiled program for the workbook's current macros. */
   program(): VbaProgram {
-    const project = this.doc().wb.macros ?? new MacroProject();
-    if (this.cache && this.project === project && this.cache.version === project.version) return this.cache.program;
-    const sources: ModuleSource[] = project.modules.map((m) => ({ name: m.name, code: m.code, kind: m.kind === 'form' ? 'class' : m.kind }));
-    const stepErrors: CompileError[] = [];
-    if (project.stepMacros.length) {
-      const code = project.stepMacros
-        .map((m) => {
-          const out = compileStepMacro(macroProcName(m.name), m.steps, m.description);
-          for (const p of out.problems) stepErrors.push({ module: m.name, line: 0, message: p });
-          return out.code;
-        })
-        .join('\r\n\r\n');
-      sources.push({ name: STEPS_MODULE, code, kind: 'standard' });
-    }
-    const program = new VbaProgram(sources);
-    this.cache = { version: project.version, program, stepErrors };
-    this.project = project;
-    return program;
+    return compiledProject(this.doc().wb.macros).program;
   }
 
   /** Syntax errors in the VBA modules (and problems in step macros). */
   errors(): CompileError[] {
-    const program = this.program();
-    return [...program.errors, ...(this.cache?.stepErrors ?? [])];
+    const c = compiledProject(this.doc().wb.macros);
+    return [...c.program.errors, ...c.stepErrors];
   }
 
   /** Macros people can run: public Subs without arguments, plus step macros. */
