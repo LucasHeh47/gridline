@@ -1,10 +1,27 @@
 // The no-code macro builder (Beta, Developer branch): a list of plain-English steps, each a sentence
-// with the blanks filled in place ("Color [B2:B20] [Yellow]"). Blocks (If, Repeat, For each row)
-// hold their own steps. "Show code" displays the VBA the steps turn into.
+// with the blanks filled in place ("Color [B2:B20] [Yellow]"). Blocks (If, Repeat, For each…) hold
+// their own steps; drag a step by its icon to move it, into or out of a block. Variables are set by
+// steps and used in any box as {Name}. "Show code" displays the VBA the steps turn into.
 import * as L from 'lucide';
 import { formatRange, quoteSheetName } from '../../core/address';
 import type { StepMacro } from '../../core/macros/project';
-import { compileStepMacro, describeStep, macroProcName, newStep, STEP_BY_TYPE, STEP_CATEGORIES, STEP_EXAMPLES, STEPS, type Step, type StepDef, type StepField } from '../../core/macros/steps';
+import {
+  compileStepMacro,
+  describeStep,
+  fieldShown,
+  macroProcName,
+  newStep,
+  STEP_BY_TYPE,
+  STEP_CATEGORIES,
+  STEP_EXAMPLES,
+  stepHelperCode,
+  STEPS,
+  variablesSetIn,
+  type Provided,
+  type Step,
+  type StepDef,
+  type StepField,
+} from '../../core/macros/steps';
 import type { App } from '../app';
 import { h, icon } from '../dom';
 import { Popover, promptDialog, tooltip } from '../widgets';
@@ -18,12 +35,40 @@ function stepIcon(name: string): L.IconNode {
   return ICONS[pascal] ?? L.Circle;
 }
 
+/** Whether `list` is inside `step` (a block can't be dropped into itself). */
+function holds(step: Step, list: Step[]): boolean {
+  for (const inner of [step.body, step.elseBody]) {
+    if (!inner) continue;
+    if (inner === list || inner.some((s) => holds(s, list))) return true;
+  }
+  return false;
+}
+
+/** Whether a step sets or mentions a variable. */
+function mentions(step: Step, name: string): boolean {
+  const n = name.trim().toLowerCase();
+  const def = STEP_BY_TYPE.get(step.type);
+  if (def?.sets && (step.args[def.sets] ?? '').trim().toLowerCase() === n) return true;
+  return Object.values(step.args).some((v) => v.toLowerCase().includes(`{${n}}`));
+}
+
+const ALWAYS: Provided[] = [
+  { name: 'Today', hint: 'today’s date' },
+  { name: 'Now', hint: 'the date and time' },
+];
+
 export class StepBuilder {
   readonly el: HTMLElement;
   private listEl: HTMLElement;
   private codeEl: HTMLElement;
+  private problemsEl: HTMLElement;
+  private varsEl: HTMLElement;
   private showCode = false;
   private titleEl: HTMLElement;
+  private cards = new Map<HTMLElement, Step>();
+  private drag: { list: Step[]; step: Step; card: HTMLElement } | null = null;
+  private dropAt: { list: Step[]; index: number } | null = null;
+  private dropMark = h('div', { class: 'sb-drop' });
 
   constructor(
     private app: App,
@@ -33,6 +78,8 @@ export class StepBuilder {
     this.titleEl = h('h3', { class: 'sb-title' });
     this.listEl = h('div', { class: 'sb-list' });
     this.codeEl = h('div', { class: 'sb-code', hidden: true });
+    this.problemsEl = h('div', { class: 'sb-problems', hidden: true });
+    this.varsEl = h('div', { class: 'sb-vars', hidden: true });
     const codeBtn = h('button', { class: 'btn outline', onclick: () => this.toggleCode(codeBtn) }, icon(L.Code, 14), 'Show code') as HTMLButtonElement;
     tooltip(codeBtn, 'See the VBA code these steps turn into');
     this.el = h(
@@ -54,7 +101,7 @@ export class StepBuilder {
   }
 
   dispose(): void {
-    // nothing to clean up
+    this.endDrag();
   }
 
   async rename(): Promise<void> {
@@ -84,20 +131,64 @@ export class StepBuilder {
     this.renderCode();
   }
 
+  private compiled() {
+    return compileStepMacro(macroProcName(this.macro.name), this.macro.steps, this.macro.description);
+  }
+
   private renderCode(): void {
     if (!this.showCode) return;
-    const { code, problems } = compileStepMacro(macroProcName(this.macro.name), this.macro.steps, this.macro.description);
+    const { code, helpers } = this.compiled();
+    const all = helpers.length ? `${code}\r\n\r\n${stepHelperCode(helpers)}` : code;
     this.codeEl.innerHTML = '';
     this.codeEl.append(
       h('div', { class: 'hint' }, 'This is the VBA your steps turn into. It works in Excel too.'),
-      ...problems.map((p) => h('div', { class: 'out-line err' }, icon(L.CircleAlert, 13), p)),
-      Object.assign(h('pre', { class: 'code-hl static' }), { innerHTML: highlightCode(code.replace(/\r\n/g, '\n')) }),
+      Object.assign(h('pre', { class: 'code-hl static' }), { innerHTML: highlightCode(all.replace(/\r\n/g, '\n')) }),
     );
+  }
+
+  /** Mistakes the steps have (a missing cell, a variable that's never set), above the steps. */
+  private renderProblems(): void {
+    const { problems } = this.compiled();
+    this.problemsEl.hidden = !problems.length;
+    this.problemsEl.replaceChildren(...problems.map((p) => h('div', { class: 'sb-problem' }, icon(L.TriangleAlert, 13), h('span', null, p))));
+  }
+
+  /** The variables this macro sets, as chips that point out the steps using them. */
+  private renderVars(): void {
+    const names = variablesSetIn(this.macro.steps);
+    this.varsEl.hidden = !names.length;
+    this.varsEl.replaceChildren(
+      h('span', { class: 'sb-vars-label' }, icon(L.Variable, 13), 'Variables'),
+      ...names.map((n) => {
+        const chip = h('button', { class: 'chip sb-var-chip', onclick: () => this.pointOut(n) }, `{${n}}`) as HTMLButtonElement;
+        tooltip(chip, `Show the steps that use {${n}}`);
+        return chip;
+      }),
+    );
+    // Suggestions for variable name boxes
+    let dl = document.getElementById('sb-var-names') as HTMLDataListElement | null;
+    if (!dl) document.body.append((dl = h('datalist', { id: 'sb-var-names' }) as HTMLDataListElement));
+    dl.replaceChildren(...names.map((n) => h('option', { value: n })));
+  }
+
+  private pointOut(name: string): void {
+    let first: HTMLElement | null = null;
+    for (const [card, step] of this.cards) {
+      if (!mentions(step, name)) continue;
+      first ??= card;
+      card.classList.remove('hl');
+      void card.offsetWidth;
+      card.classList.add('hl');
+      setTimeout(() => card.classList.remove('hl'), 1600);
+    }
+    first?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
   private update(): void {
     this.changed();
     this.renderCode();
+    this.renderProblems();
+    this.renderVars();
   }
 
   // ---------- list ----------
@@ -105,15 +196,18 @@ export class StepBuilder {
   private render(): void {
     this.titleEl.textContent = this.macro.name;
     this.listEl.innerHTML = '';
+    this.cards.clear();
     const desc = h('input', { class: 'input sb-desc', placeholder: 'What does this macro do? (optional)', value: this.macro.description ?? '' }) as HTMLInputElement;
     desc.addEventListener('change', () => {
       this.macro.description = desc.value.trim() || undefined;
       this.update();
     });
-    this.listEl.append(desc);
+    this.listEl.append(desc, this.problemsEl, this.varsEl);
     if (!this.macro.steps.length) this.listEl.append(this.examples());
     this.listEl.append(this.stepList(this.macro.steps, []));
     this.renderCode();
+    this.renderProblems();
+    this.renderVars();
   }
 
   private examples(): HTMLElement {
@@ -144,21 +238,56 @@ export class StepBuilder {
     );
   }
 
-  /** A list of steps with an "Add step" button. `vars` are loop variables available inside. */
-  private stepList(steps: Step[], vars: string[]): HTMLElement {
+  /** A list of steps with an "Add step" button. `scope` is what the blocks around it provide. */
+  private stepList(steps: Step[], scope: Provided[]): HTMLElement {
     const box = h('div', { class: 'sb-steps' });
-    steps.forEach((step, i) => box.append(this.card(steps, i, vars)));
+    steps.forEach((step, i) => box.append(this.card(steps, i, scope)));
     const add = h('button', { class: 'btn outline sb-add' }, icon(L.Plus, 14), steps.length ? 'Add step' : 'Add a step') as HTMLButtonElement;
-    add.addEventListener('click', () => this.pickStep(add, (type) => {
-      steps.push(newStep(type));
+    add.addEventListener('click', () =>
+      this.pickStep(add, (type) => {
+        steps.push(newStep(type));
+        this.render();
+        this.update();
+      }),
+    );
+    box.append(add);
+    // Dropping a dragged step here (the innermost list under the pointer wins)
+    box.addEventListener('dragover', (e) => {
+      if (!this.drag || holds(this.drag.step, steps)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      const cards = [...box.children].filter((el) => el.classList.contains('sb-card')) as HTMLElement[];
+      let index = cards.findIndex((c) => e.clientY < c.getBoundingClientRect().top + c.getBoundingClientRect().height / 2);
+      if (index < 0) index = cards.length;
+      box.insertBefore(this.dropMark, cards[index] ?? add);
+      this.dropAt = { list: steps, index };
+    });
+    box.addEventListener('drop', (e) => {
+      if (!this.drag || this.dropAt?.list !== steps) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const { list: from, step } = this.drag;
+      let at = this.dropAt.index;
+      const old = from.indexOf(step);
+      if (old >= 0) from.splice(old, 1);
+      if (from === steps && old >= 0 && old < at) at--;
+      steps.splice(at, 0, step);
+      this.endDrag();
       this.render();
       this.update();
-    }));
-    box.append(add);
+    });
     return box;
   }
 
-  private card(list: Step[], index: number, vars: string[]): HTMLElement {
+  private endDrag(): void {
+    this.drag?.card.classList.remove('dragging');
+    this.drag = null;
+    this.dropAt = null;
+    this.dropMark.remove();
+  }
+
+  private card(list: Step[], index: number, scope: Provided[]): HTMLElement {
     const step = list[index];
     const def = STEP_BY_TYPE.get(step.type);
     if (!def) return h('div', { class: 'sb-card bad' }, `Unknown step "${step.type}"`);
@@ -168,7 +297,7 @@ export class StepBuilder {
       this.toolBtn(L.ArrowUp, 'Move up', index === 0, () => this.move(list, index, -1)),
       this.toolBtn(L.ArrowDown, 'Move down', index === list.length - 1, () => this.move(list, index, 1)),
       this.toolBtn(L.Copy, 'Duplicate', false, () => {
-        list.splice(index + 1, 0, structuredClone({ ...step, id: 's' + Math.random().toString(36).slice(2, 9) }));
+        list.splice(index + 1, 0, withNewIds(structuredClone(step)));
         this.render();
         this.update();
       }),
@@ -183,24 +312,61 @@ export class StepBuilder {
         this.update();
       }),
     );
+    // The icon is the drag handle; the card is only draggable while it's held, so text in the
+    // boxes can still be selected with the mouse
+    const handle = h('span', { class: 'sb-icon sb-handle' }, icon(stepIcon(def.icon), 15));
+    tooltip(handle, 'Drag to move (into or out of a block)');
     const card = h(
       'div',
       { class: `sb-card cat-${def.category.toLowerCase()}${step.off ? ' off' : ''}${def.block ? ' block' : ''}` },
-      h('div', { class: 'sb-line' }, h('span', { class: 'sb-icon' }, icon(stepIcon(def.icon), 15)), this.sentence(def, step, vars), tools),
+      h('div', { class: 'sb-line' }, handle, this.sentence(def, step, scope), tools),
     );
+    this.cards.set(card, step);
+    handle.addEventListener('pointerdown', () => (card.draggable = true));
+    handle.addEventListener('pointerup', () => (card.draggable = false));
+    card.addEventListener('dragstart', (e) => {
+      if (!card.draggable) return;
+      e.stopPropagation();
+      this.drag = { list, step, card };
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', describeStep(step));
+      }
+      requestAnimationFrame(() => card.classList.add('dragging'));
+    });
+    card.addEventListener('dragend', () => {
+      card.draggable = false;
+      this.endDrag();
+    });
     if (def.block) {
-      const inner = def.provides ? [...vars, def.provides] : vars;
-      if (def.provides) card.append(h('div', { class: 'sb-provides' }, 'Inside this block, use ', h('code', null, `{${def.provides}}`), def.provides === 'Row' ? ' for the row number, e.g. D{Row}' : ' for the repeat number'));
+      const inner = def.provides ? [...def.provides, ...scope.filter((v) => !def.provides!.some((p) => p.name === v.name))] : scope;
+      if (def.provides?.length)
+        card.append(
+          h(
+            'div',
+            { class: 'sb-provides' },
+            'Inside this block, use ',
+            ...def.provides.flatMap((p, i) => [i ? ', ' : '', h('code', null, `{${p.name}}`), ` for ${p.hint}`]),
+          ),
+        );
       step.body ??= [];
       card.append(h('div', { class: 'sb-inner' }, this.stepList(step.body, inner)));
       if (def.hasElse) {
         if (step.elseBody) card.append(h('div', { class: 'sb-else-label' }, 'Otherwise'), h('div', { class: 'sb-inner' }, this.stepList(step.elseBody, inner)));
         else
           card.append(
-            h('button', { class: 'btn text sb-add-else', onclick: () => {
-              step.elseBody = [];
-              this.render();
-            } }, icon(L.Plus, 12), 'Otherwise…'),
+            h(
+              'button',
+              {
+                class: 'btn text sb-add-else',
+                onclick: () => {
+                  step.elseBody = [];
+                  this.render();
+                },
+              },
+              icon(L.Plus, 12),
+              'Otherwise…',
+            ),
           );
       }
     }
@@ -221,41 +387,46 @@ export class StepBuilder {
     this.update();
   }
 
-  /** The step's sentence with its fields as inline inputs. */
-  private sentence(def: StepDef, step: Step, vars: string[]): HTMLElement {
+  /** The step's sentence with its fields as inline inputs (fields that don't apply are left out). */
+  private sentence(def: StepDef, step: Step, scope: Provided[]): HTMLElement {
     const out = h('div', { class: 'sb-sentence' });
     const parts = def.sentence.split(/(\{\w+\})/);
     for (const part of parts) {
       const m = /^\{(\w+)\}$/.exec(part);
       if (!m) {
-        if (part) out.append(h('span', null, part));
+        // Punctuation sticks to the box before it ("Change [Total]: add")
+        if (part.trim()) out.append(h('span', { class: /^[:,.)]/.test(part) ? 'sb-punct' : undefined }, part));
         continue;
       }
       const field = def.fields.find((f) => f.key === m[1]);
-      if (field) out.append(this.field(field, step, vars));
+      if (field && fieldShown(field, step.args, def)) out.append(this.field(def, field, step, scope));
     }
     // Fields not mentioned in the sentence (like "First row is a header")
-    for (const f of def.fields) if (!def.sentence.includes(`{${f.key}}`)) out.append(h('span', { class: 'sb-extra' }, `${f.label}:`), this.field(f, step, vars));
+    for (const f of def.fields)
+      if (!def.sentence.includes(`{${f.key}}`) && fieldShown(f, step.args, def)) out.append(h('span', { class: 'sb-extra' }, `${f.label}:`), this.field(def, f, step, scope));
     return out;
   }
 
-  private field(f: StepField, step: Step, vars: string[]): HTMLElement {
+  private field(def: StepDef, f: StepField, step: Step, scope: Provided[]): HTMLElement {
     const value = step.args[f.key] ?? f.dflt ?? '';
     const set = (v: string) => {
       step.args[f.key] = v;
       this.update();
     };
     if (f.kind === 'choice' || f.kind === 'color') {
-      const sel = h('select', { class: `input sb-field${f.kind === 'color' ? ' color' : ''}`, 'aria-label': f.label }) as HTMLSelectElement;
+      const sel = h('select', { class: `input sb-field${f.kind === 'color' ? ' color' : ''}${f.key === 'join' && !value ? ' quiet' : ''}`, 'aria-label': f.label }) as HTMLSelectElement;
       for (const [v, label] of f.options ?? []) sel.append(h('option', { value: v }, label));
       sel.value = value;
       const paint = () => {
         if (f.kind === 'color') sel.style.setProperty('--swatch', sel.value === 'none' ? 'transparent' : sel.value);
       };
       paint();
+      // Other fields that only apply for some choices appear or disappear
+      const shapes = def.fields.some((x) => x.when?.key === f.key);
       sel.addEventListener('change', () => {
         paint();
         set(sel.value);
+        if (shapes) this.render();
       });
       return sel;
     }
@@ -269,18 +440,27 @@ export class StepBuilder {
       return sel;
     }
     const wide = f.kind === 'text';
+    const mono = f.kind === 'range' || f.kind === 'cell' || f.kind === 'column';
     const input = h('input', {
-      class: `input sb-field${f.kind === 'range' || f.kind === 'cell' || f.kind === 'column' ? ' mono' : ''}${wide ? ' wide' : ''}`,
+      class: `input sb-field${mono ? ' mono' : ''}${wide ? ' wide' : ''}${f.kind === 'variable' ? ' var' : ''}`,
       value,
       placeholder: f.placeholder ?? f.label,
       'aria-label': f.label,
       spellcheck: false,
     }) as HTMLInputElement;
-    input.size = Math.max(f.kind === 'column' ? 3 : 6, Math.min(wide ? 40 : 18, (value || f.placeholder || '').length + 1));
-    input.addEventListener('input', () => {
-      input.size = Math.max(f.kind === 'column' ? 3 : 6, Math.min(wide ? 40 : 18, input.value.length + 1));
+    const fit = () => (input.size = Math.max(f.kind === 'column' ? 3 : 6, Math.min(wide ? 40 : 18, (input.value || f.placeholder || '').length + 1)));
+    fit();
+    input.addEventListener('input', fit);
+    input.addEventListener('change', () => {
+      set(input.value);
+      // A renamed variable changes the chips and suggestions
+      if (f.kind === 'variable') this.renderVars();
     });
-    input.addEventListener('change', () => set(input.value));
+    if (f.kind === 'variable') {
+      input.setAttribute('list', 'sb-var-names');
+      return input;
+    }
+    if (f.kind === 'column') return input;
     if (f.kind === 'sheet') {
       const listId = 'sb-sheets';
       let dl = document.getElementById(listId) as HTMLDataListElement | null;
@@ -289,6 +469,7 @@ export class StepBuilder {
       for (const s of this.app.doc.wb.sheets) dl.append(h('option', { value: s.name }));
       input.setAttribute('list', listId);
     }
+    const vars = this.varButton(input, scope, set);
     if (f.kind === 'range' || f.kind === 'cell') {
       const pick = h('button', { class: 'btn sb-pick', 'aria-label': 'Use the selected cells' }, icon(L.SquareDashedMousePointer, 13)) as HTMLButtonElement;
       tooltip(pick, 'Use the cells selected on the sheet');
@@ -297,15 +478,64 @@ export class StepBuilder {
         const r = formatRange(app.sel.range);
         const first = app.doc.wb.sheets.find((s) => !s.hidden);
         input.value = app.sheet === first ? r : `${quoteSheetName(app.sheet.name)}!${r}`;
+        fit();
         set(input.value);
       });
-      const hint = vars.length ? h('span', { class: 'sb-var-hint' }, ...vars.map((v) => h('button', { class: 'chip', onclick: () => {
-        input.value += `{${v}}`;
-        set(input.value);
-      } }, `{${v}}`))) : null;
-      return h('span', { class: 'sb-range' }, input, pick, hint);
+      // Quick chips for the names most used in addresses (D{Row}, {Cell})
+      const quick = scope.filter((v) => v.name === 'Row' || v.name === 'Cell');
+      const chips = quick.length
+        ? h(
+            'span',
+            { class: 'sb-var-hint' },
+            ...quick.map((v) =>
+              h(
+                'button',
+                {
+                  class: 'chip',
+                  onclick: () => {
+                    insertAtCaret(input, `{${v.name}}`);
+                    fit();
+                    set(input.value);
+                  },
+                },
+                `{${v.name}}`,
+              ),
+            ),
+          )
+        : null;
+      return h('span', { class: 'sb-range' }, input, pick, vars, chips);
     }
-    return input;
+    return h('span', { class: 'sb-range' }, input, vars);
+  }
+
+  /** The {…} button next to a box: inserts a variable where the cursor is. */
+  private varButton(input: HTMLInputElement, scope: Provided[], set: (v: string) => void): HTMLButtonElement {
+    const btn = h('button', { class: 'btn sb-pick sb-var-btn', 'aria-label': 'Insert a variable' }, icon(L.Braces, 13)) as HTMLButtonElement;
+    tooltip(btn, 'Insert a variable');
+    btn.addEventListener('click', () => {
+      const pick = (name: string) => {
+        pop.close();
+        insertAtCaret(input, `{${name}}`);
+        input.dispatchEvent(new Event('input'));
+        set(input.value);
+      };
+      const item = (v: Provided) => h('button', { class: 'sb-var-item', onclick: () => pick(v.name) }, h('code', null, `{${v.name}}`), h('span', null, v.hint));
+      const own = variablesSetIn(this.macro.steps)
+        .filter((n) => !scope.some((v) => v.name.toLowerCase() === n.toLowerCase()))
+        .map((n) => ({ name: n, hint: 'your variable' }));
+      const menu = h(
+        'div',
+        { class: 'sb-var-menu' },
+        ...(scope.length ? [h('div', { class: 'me-section' }, 'From the blocks around this step'), ...scope.map(item)] : []),
+        h('div', { class: 'me-section' }, 'Your variables'),
+        ...(own.length ? own.map(item) : [h('div', { class: 'hint' }, 'None yet. Add a “Set a variable” step to make one.')]),
+        h('div', { class: 'me-section' }, 'Always available'),
+        ...ALWAYS.map(item),
+      );
+      const pop = new Popover(menu, btn);
+      pop.open(btn);
+    });
+    return btn;
   }
 
   // ---------- adding steps ----------
@@ -325,10 +555,13 @@ export class StepBuilder {
           results.append(
             h(
               'button',
-              { class: `sb-pick-item cat-${d.category.toLowerCase()}`, onclick: () => {
-                pop.close();
-                onPick(d.type);
-              } },
+              {
+                class: `sb-pick-item cat-${d.category.toLowerCase()}`,
+                onclick: () => {
+                  pop.close();
+                  onPick(d.type);
+                },
+              },
               h('span', { class: 'sb-icon' }, icon(stepIcon(d.icon), 15)),
               h('span', { class: 'sb-pick-text' }, h('strong', null, d.title), h('span', null, describeStep(newStep(d.type)))),
             ),
@@ -347,10 +580,28 @@ export class StepBuilder {
   }
 }
 
+/** Puts text where the cursor is (or was, before the box lost focus). */
+function insertAtCaret(input: HTMLInputElement, text: string): void {
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  input.value = input.value.slice(0, start) + text + input.value.slice(end);
+  input.focus();
+  input.setSelectionRange(start + text.length, start + text.length);
+}
+
+/** A copied step (and the steps inside it) with new ids. */
+function withNewIds(step: Step): Step {
+  step.id = 's' + Math.random().toString(36).slice(2, 9);
+  step.body?.forEach(withNewIds);
+  step.elseBody?.forEach(withNewIds);
+  return step;
+}
+
 const CATEGORY_LABELS: Record<string, string> = {
   Cells: 'Cells & data',
   Format: 'Formatting',
   Sheets: 'Sheets',
+  Variables: 'Variables',
   Logic: 'Logic & loops',
   Talk: 'Messages & questions',
   Workbook: 'Workbook',

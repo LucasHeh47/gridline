@@ -7,6 +7,24 @@
   - Optional parameters, error values (`CVErr`), arrays that spill, `Application.Volatile` and `Application.Caller` all work.
   - Like in Excel, these functions can read the whole workbook but not change it. They run only while the workbook's macros are on; until then, their cells show the values saved in the file.
 - `IsError(CVErr(…))` is now True, and a macro writing `CVErr(xlErrNA)` to a cell puts `#N/A` there instead of the number 2042.
+- **Step macros (Beta) can now use variables.** A new **Variables** group of steps:
+  - **Set a variable** to text, a number, a cell (`[B2]`) or a formula with variables in it (`=ROUND({Price}*{Qty}, 2)`);
+  - **Change a number** (add, subtract, multiply, divide, round, remainder, limit), **Change text** (add to it, replace, uppercase, trim, keep the first or last characters) and **Change a date** (add days, working days, weeks, months or years);
+  - **Get a total or count** of cells, the last row with data or the next empty row;
+  - **Find a value** and remember its row, its address or the value next to it;
+  - **Pick a random number**.
+- **More logic in step macros:**
+  - **If** can check a `{Variable}`, not just a cell, and can take a second rule joined with *and* or *or*;
+  - new loops: **Repeat while/until**, **For each cell** (`{Cell}` and `{Value}`), **For each item in a list** (`{Item}`) and **For each sheet** (`{Sheet}`);
+  - **Stop repeating** leaves a loop early; **If a step fails** can skip errors and keep going; **Note** adds a comment; **Write to the output** prints to the output panel.
+  - Comparisons work the way you'd expect: numbers as numbers (an answer of "1,200" counts as 1200), dates as dates, and text ignoring upper and lower case.
+- **A better step builder:**
+  - drag a step by its icon to move it, including into and out of If and loop blocks;
+  - the **{ }** button next to a box inserts a variable, listing the ones from the blocks around the step, your own, and `{Today}`/`{Now}`;
+  - the variables a macro uses are shown at the top; click one to point out the steps that use it;
+  - mistakes show above the steps, like a variable that's used but never set ("Did you mean {Total}?");
+  - boxes that don't apply are hidden (the replacement text only shows for *replace*).
+  - Two new examples: **Add up paid amounts** and **A sheet per quarter**.
 - **Tabs for workbooks.** Open several files in one window, each in its own tab at the top, like a web browser:
   - **Ctrl+N** opens a new workbook in a new tab;
   - files you open, from Gridline or from File Explorer, open in tabs too;

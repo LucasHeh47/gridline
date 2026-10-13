@@ -122,19 +122,64 @@ is on, and in any workbook that already has step macros.
 
 1. Click **Automate → Step macro**, or pick one of the **Examples**.
 2. Click **Add step** and choose what should happen. Steps are grouped into Cells & data, Formatting,
-   Sheets, Logic & loops, Messages & questions, and Workbook.
+   Sheets, Variables, Logic & loops, Messages & questions, and Workbook.
 3. Fill in the blanks. For cells, click the **⬚** button next to a box to use the cells you've
    selected on the sheet.
 4. Click **Run**.
 
-**Blocks:** *If*, *Repeat* and *For each row* hold other steps. Inside *For each row*, write `{Row}`
-for the current row number. For example, `A{Row}:D{Row}` is "this row, columns A to D".
-
-**Remembering values:** *Ask a question* and *Remember a value* store an answer under a name. Use it
-later in any box as `{Name}`. `{Today}` and `{Now}` are always available.
+To move a step, drag it by its icon, including into or out of a block. The arrows on the right
+move it up or down too.
 
 **Show code** displays the VBA the steps turn into, next to the steps. It's a good way to learn VBA,
 and the code works in Excel too.
+
+### Variables
+
+A variable keeps a value while the macro runs: a total, a name, a date, a row number. Give it a name
+in a step from the **Variables** group, then use it in any box as `{Name}`, for example
+`Total: {Total}`, `B{Next row}` or `={Price}*2`. The **{ }** button next to a box inserts one for you.
+
+| Step | What it does |
+| --- | --- |
+| Set a variable | Stores text, a number, a cell's value (`[B2]`) or a formula's result (`=ROUND({Total}*1.07, 2)`). |
+| Change a number | Adds, subtracts, multiplies, divides, rounds, keeps the remainder, or limits it. A variable that was never set starts at 0. |
+| Change text | Adds text to the end or start, replaces or removes text, changes the case, removes extra spaces, or keeps the first or last characters. |
+| Change a date | Adds or subtracts days, working days, weeks, months or years. |
+| Get a total or count | The sum, average, largest, smallest or count of some cells, or the last row with data (or the next empty one) in a column. |
+| Find a value | Looks for a value in some cells and remembers its row, its address, the value next to it, or just whether it was found. |
+| Pick a random number | A whole number between two numbers. |
+| Ask a question | (in Messages & questions) Stores the answer someone types. |
+
+The variables a macro uses are listed above its steps; click one to see which steps use it. If a box
+uses a variable that no step ever sets, usually a typo, a warning appears above the steps.
+
+A few names are always there: `{Today}` and `{Now}`. Blocks add their own while their steps run:
+
+| Block | Names inside it |
+| --- | --- |
+| Repeat, Repeat while… | `{Count}`: 1, 2, 3… |
+| For each row | `{Row}`: the row number. `A{Row}:D{Row}` is "this row, columns A to D". |
+| For each cell | `{Cell}`: the cell itself (*Set* `{Cell}` *to* `0`), and `{Value}`: what's in it. |
+| For each item in a list | `{Item}`: one item of a list like `Jan, Feb, Mar` (or a variable holding one). |
+| For each sheet | `{Sheet}`: the sheet's name. Steps inside work on that sheet. |
+
+In a formula, a variable goes in the way the formula needs it: text in quotes, numbers as numbers.
+Where it's part of a reference (`B{Row}`, `{Sheet}!A1`) or inside quotes (`="Hi {Name}"`), its text
+goes in as it is.
+
+### Rules and loops
+
+- **If** checks a cell or a `{Variable}`: *is*, *is not*, *is more/less than*, *is at least/at most*,
+  *contains*, *is empty*. Choose *and* or *or* to add a second rule. Numbers compare as numbers (an
+  answer of "1,200" is 1200), dates as dates, and text ignores upper and lower case. An empty cell is
+  never more or less than a number.
+- **Repeat while…** keeps going while (or until) a rule is true. If a loop never ends, press **Esc**
+  or **Stop**.
+- **Stop repeating** leaves the loop it's in.
+- **If a step fails** chooses what happens after an error in a later step: skip that step and keep
+  going, or stop with the error (what happens without this step).
+- **Note** is a comment for you; it doesn't do anything. **Write to the output** prints to the panel
+  under the editor, which helps you check what a variable holds.
 
 ### Examples included
 
@@ -145,6 +190,8 @@ and the code works in Excel too.
 | Clear the input cells | Asks first, then empties B2:B20 for next month. |
 | Mark paid rows | Goes through each row and colors it green when column D says "Paid". |
 | Monthly report sheet | Asks for a month, copies the Template sheet and names it after the month. |
+| Add up paid amounts | Adds up column C for the rows marked "Paid" in column D and shows the total, using two variables. |
+| A sheet per quarter | Adds a sheet for each of Q1 to Q4, with a bold heading in A1. |
 
 ## Buttons, shortcuts and automatic macros
 

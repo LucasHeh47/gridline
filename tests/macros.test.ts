@@ -5,7 +5,7 @@ import type { MacroUI } from '../src/core/macros/host';
 import { MacroProject } from '../src/core/macros/project';
 import { r1c1ToA1 } from '../src/core/macros/range';
 import { MacroRunner } from '../src/core/macros/runner';
-import { compileStepMacro, newStep, STEP_EXAMPLES, STEPS } from '../src/core/macros/steps';
+import { compileStepMacro, newStep, stepHelperCode, STEP_EXAMPLES, STEPS } from '../src/core/macros/steps';
 import type { Sheet } from '../src/core/workbook';
 import { makeDoc, val } from './helpers';
 
@@ -258,9 +258,9 @@ describe('step macros', () => {
   it('compiles every step type to valid VBA', () => {
     for (const def of STEPS) {
       const step = newStep(def.type);
-      const { code } = compileStepMacro('Test', [step]);
+      const { code, helpers } = compileStepMacro('Test', [step]);
       const project = new MacroProject();
-      project.addModule('standard', 'M', code);
+      project.addModule('standard', 'M', code + '\r\n\r\n' + stepHelperCode(helpers));
       const runner = new MacroRunner(
         () => {
           const d = makeDoc();
