@@ -1357,9 +1357,13 @@ export class App {
     if (unsupported.length && s.getCell(a.row, a.col)?.cached !== undefined) {
       el.className = 'explainer warn';
       el.hidden = false;
+      // Functions written in the workbook's VBA code just need macros turned on
+      const fromMacros = unsupported.every((f) => this.doc.wb.macros?.definesFunction(f));
       el.append(
         h('span', { class: 'icon' }, '⚠'),
-        h('div', { class: 'body' }, h('div', { class: 'title' }, 'Function not supported yet'), h('div', { class: 'msg' }, `${unsupported.join(', ')} can't be calculated here, so the value saved in the file is shown. It won't update if its inputs change.`)),
+        fromMacros
+          ? h('div', { class: 'body' }, h('div', { class: 'title' }, 'Uses a function from this workbook\'s macros'), h('div', { class: 'msg' }, `${unsupported.join(', ')} ${unsupported.length === 1 ? 'is' : 'are'} written in VBA in this workbook. Turn macros on to calculate ${unsupported.length === 1 ? 'it' : 'them'}; until then, the value saved in the file is shown.`))
+          : h('div', { class: 'body' }, h('div', { class: 'title' }, 'Function not supported yet'), h('div', { class: 'msg' }, `${unsupported.join(', ')} can't be calculated here, so the value saved in the file is shown. It won't update if its inputs change.`)),
       );
       return;
     }

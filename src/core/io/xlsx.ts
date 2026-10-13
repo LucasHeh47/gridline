@@ -163,9 +163,10 @@ function fromFileFormula(f: string): string {
       .replace(/_xlfn\.ANCHORARRAY\(([^()]+)\)/gi, '$1#')
       .replace(/_xlfn\.SINGLE\(([^()]+)\)/gi, '@$1')
       .replace(/_xlfn\._xlws\.|_xlfn\.|_xlws\.|_xlpm\./gi, '')
-      // Files written by some tools mark built-in functions (CONCAT, LET, XLOOKUP…) as add-in functions
-      // (_xludf.), which Excel then shows as #NAME?. Use the built-in function; saving writes it correctly.
-      .replace(/_xludf\.([A-Za-z][A-Za-z0-9.]*)(?=\()/gi, (m, name: string) => (FUNCTIONS.has(name.toUpperCase()) ? name : m))
+      // _xludf. marks a function Excel didn't know when saving: some tools write built-ins (CONCAT, LET,
+      // XLOOKUP…) that way, and functions from VBA code can end up so too. Either way the plain name is
+      // what calculates (a built-in, or the workbook's VBA Function); saving writes it correctly.
+      .replace(/_xludf\.([A-Za-z_][A-Za-z0-9_.]*)(?=\()/gi, (_m, name: string) => name)
       .replace(/^=/, '')
   );
 }

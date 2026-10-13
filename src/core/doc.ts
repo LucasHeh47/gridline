@@ -1,6 +1,7 @@
 // A document = workbook + calculation engine + undo history.
 import { external } from './data/external';
 import { Engine } from './formula/engine';
+import type { UserFunction } from './formula/types';
 import { History, Transaction } from './history';
 import { Workbook, type Sheet } from './workbook';
 
@@ -25,6 +26,10 @@ export class Doc {
   private listeners = new Set<(e: DocEvent) => void>();
   /** Hook for the UI to attach selection state to transactions. */
   selectionProvider: (() => Transaction['selectionBefore']) | null = null;
+  /** The workbook's VBA Functions for formulas, while its macros may run. */
+  private udfs: ((name: string) => UserFunction | null) | null = null;
+  private udfVersion = -1;
+  private udfTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(wb?: Workbook) {
     this.wb = wb ?? new Workbook();
@@ -62,6 +67,8 @@ export class Doc {
   /** Replaces the whole workbook (after opening a file). */
   load(wb: Workbook): void {
     this.wb = wb;
+    // A newly opened file's code doesn't run until its macros are allowed
+    this.udfs = null;
     this.engine = new Engine(wb);
     this.engine.rebuild();
     this.history.clear();
@@ -83,6 +90,29 @@ export class Doc {
   touch(): void {
     this.history.version++;
     this.emit({ type: 'meta' });
+    // Edited VBA code: formulas using its Functions recalculate once typing pauses
+    if (this.udfs && (this.wb.macros?.version ?? 0) !== this.udfVersion) {
+      if (this.udfTimer) clearTimeout(this.udfTimer);
+      this.udfTimer = setTimeout(() => {
+        this.udfTimer = null;
+        if (this.udfs) this.setUserFunctions(this.udfs);
+      }, 500);
+    }
+  }
+
+  /**
+   * Lets formulas call the workbook's VBA Functions (=VAULTVALUE(…)), or stops them (null) when
+   * its macros aren't allowed to run. Formulas recalculate if any use such functions.
+   */
+  setUserFunctions(fn: ((name: string) => UserFunction | null) | null): void {
+    const had = !!this.engine.userFunctions;
+    this.udfs = fn;
+    this.udfVersion = this.wb.macros?.version ?? 0;
+    this.engine.userFunctions = fn;
+    if ((had || fn) && this.engine.callsUnknownFunctions()) {
+      this.engine.rebuild();
+      this.emit({ type: 'data' });
+    }
   }
 
   /** Starts an edit made in many steps over time (a running macro) that undoes as one action. */

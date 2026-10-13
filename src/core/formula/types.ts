@@ -68,6 +68,14 @@ export type Value = Scalar | RangeRef | Matrix;
 /** Function arguments: undefined marks an omitted argument, e.g. IF(A1,,1). */
 export type Arg = Value | undefined;
 
+/** A function written in the workbook's own VBA code, called from a formula (=VAULTVALUE(…)). */
+export interface UserFunction {
+  /** Recalculated after every change (the code calls Application.Volatile). */
+  volatile: boolean;
+  /** Arguments are evaluated: references stay references, so the code can get a Range. */
+  call(ctx: Ctx, args: Arg[]): Value;
+}
+
 export interface Ctx {
   wb: Workbook;
   sheet: Sheet;
@@ -89,4 +97,6 @@ export interface Ctx {
   formulaText(sheet: Sheet, row: number, col: number): string | null;
   /** Iterates non-empty cells in a range in row-major order. */
   forEachInRange(ref: RangeRef, cb: (v: Scalar, r: number, c: number) => void | boolean): void;
+  /** A function defined in the workbook's VBA code, when macros may run. */
+  udf?(name: string): UserFunction | null;
 }

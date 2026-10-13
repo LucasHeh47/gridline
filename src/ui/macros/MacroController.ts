@@ -4,6 +4,7 @@ import * as L from 'lucide';
 import { keyCol, keyRow, type Range } from '../../core/address';
 import type { Transaction } from '../../core/history';
 import type { MacroUI } from '../../core/macros/host';
+import { userFunctions } from '../../core/macros/cellFunctions';
 import { MacroProject } from '../../core/macros/project';
 import { ensureDocumentModules, MacroRunner, type RunResult } from '../../core/macros/runner';
 import type { Sheet } from '../../core/workbook';
@@ -80,6 +81,12 @@ export class MacroController {
 
   // ---------- opening files ----------
 
+  /** Formulas can use the workbook's VBA Functions only while its macros may run. */
+  private syncFunctions(): void {
+    const doc = this.app.doc;
+    doc.setUserFunctions(this.enabled ? userFunctions(doc) : null);
+  }
+
   /** After a workbook is opened: decide whether its macros may run, and run Workbook_Open. */
   async workbookOpened(path: string | null, fromFile: boolean): Promise<void> {
     this.output.length = 0;
@@ -88,15 +95,18 @@ export class MacroController {
     const hasMacros = !!p && (p.hasCode || p.stepMacros.length > 0);
     if (!hasMacros || !fromFile) {
       this.enabled = true;
+      this.syncFunctions();
       return;
     }
     const mode = this.app.settings.str('macros.security');
     if (mode === 'enable' || (path && this.trusted().includes(path))) {
       this.enabled = true;
+      this.syncFunctions();
       await this.fireOpen();
       return;
     }
     this.enabled = false;
+    this.syncFunctions();
     if (mode === 'disable') {
       this.showBanner('Macros in this workbook are turned off (Settings → Macros).', [{ label: 'Settings', run: () => this.app.openSettings('macros') }]);
       return;
@@ -121,6 +131,7 @@ export class MacroController {
     }
     this.enabled = true;
     this.hideBanner();
+    this.syncFunctions();
     await this.fireOpen();
   }
 

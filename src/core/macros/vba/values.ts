@@ -1,4 +1,5 @@
 // Runtime values for the VBA interpreter, and VBA's conversion and comparison rules.
+import type { Pending } from './flow';
 import { serialToParts } from '../../dates';
 
 export const EMPTY = Symbol('Empty');
@@ -29,13 +30,16 @@ export class StopSignal {
 /** An object exposed to VBA code (Range, Worksheet, Collection…). */
 export interface VbObject {
   readonly vbType: string;
-  /** Property read or method call. `args` are already evaluated. */
-  get(name: string, args: Value[], named?: Record<string, Value>): Value | Promise<Value>;
+  /**
+   * Property read or method call. `args` are already evaluated. A promise means it has to wait (a
+   * message box); a generator is more VBA code to run (a class module's property).
+   */
+  get(name: string, args: Value[], named?: Record<string, Value>): Pending<Value>;
   /** Property write. */
-  set(name: string, args: Value[], v: Value): void | Promise<void>;
+  set(name: string, args: Value[], v: Value): Pending<void>;
   /** Default member (`rng(1, 1)`, `x = rng`). */
-  dflt?(args: Value[]): Value | Promise<Value>;
-  setDflt?(args: Value[], v: Value): void | Promise<void>;
+  dflt?(args: Value[]): Pending<Value>;
+  setDflt?(args: Value[], v: Value): Pending<void>;
   /** Items for For Each. */
   items?(): Value[];
 }

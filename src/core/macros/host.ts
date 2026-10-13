@@ -17,6 +17,7 @@ import { validateSheetName, type Sheet } from '../workbook';
 import { hexToVb, opt, RangeObj, unsupported, vbToHex, wildcard } from './range';
 import { MISSING } from './vba/builtins';
 import type { VbaHost, VbaProgram } from './vba/interpreter';
+import { isGen, type Pending } from './vba/flow';
 import { EMPTY, isObject, NULL, StopSignal, toBool, toNum, toStr, VbArray, VbDate, VbError, type Value, type VbObject } from './vba/values';
 
 export interface MacroUI {
@@ -105,6 +106,8 @@ export class MacroSession implements VbaHost {
   private stopRequested = false;
   private sheetObjs = new Map<Sheet, SheetObj>();
   private sorts = new Map<Sheet, SortObj>();
+  /** For a function used in a cell: the cell (Application.Caller). */
+  caller: { sheet: Sheet; row: number; col: number } | null = null;
 
   constructor(
     readonly doc: Doc,
@@ -123,7 +126,7 @@ export class MacroSession implements VbaHost {
     return GLOBALS.has(name) || !!this.sheetByCodeName(name);
   }
 
-  global(name: string, args: Value[], named: Record<string, Value> | undefined, me: VbObject | null): Value | Promise<Value> {
+  global(name: string, args: Value[], named: Record<string, Value> | undefined, me: VbObject | null): Pending<Value> {
     if (!GLOBALS.has(name)) {
       const sheet = this.sheetByCodeName(name);
       if (sheet) return this.sheetObj(sheet);
@@ -151,7 +154,12 @@ export class MacroSession implements VbaHost {
     this.ui.print(text);
   }
 
-  async tick(): Promise<void> {
+  tick(): void | Promise<void> {
+    return this.pause();
+  }
+
+  /** Lets the app repaint and respond while long-running code works. */
+  private async pause(): Promise<void> {
     const now = performance.now();
     if (now - this.lastYield < 30) return;
     if (this.screenUpdating && now - this.lastPaint > 500) {
@@ -280,7 +288,7 @@ export class MacroSession implements VbaHost {
         return;
       }
       const d = v.dflt?.([]);
-      if (d === undefined || d instanceof Promise) throw new VbError(13, `A ${v.vbType} can't be put in a cell.`);
+      if (d === undefined || d instanceof Promise || isGen(d)) throw new VbError(13, `A ${v.vbType} can't be put in a cell.`);
       v = d;
     }
     if (v === EMPTY || v === null || v === NULL || v === undefined || v === '') {
@@ -491,7 +499,7 @@ export class MacroSession implements VbaHost {
 
   // ---------- Application members (also used for globals like Range and ActiveSheet) ----------
 
-  async appMember(name: string, args: Value[], named: Record<string, Value> | undefined, me: Sheet | null): Promise<Value> {
+  appMember(name: string, args: Value[], named: Record<string, Value> | undefined, me: Sheet | null): Pending<Value> {
     const o = (i: number, n: string) => opt(args, named, i, n);
     const base = me ?? this.activeSheet();
     switch (name) {
@@ -577,7 +585,7 @@ export class MacroSession implements VbaHost {
     return toBool(this.settings.get('enableevents') ?? true);
   }
 
-  private async applicationOnly(name: string, args: Value[], named: Record<string, Value> | undefined): Promise<Value> {
+  private applicationOnly(name: string, args: Value[], named: Record<string, Value> | undefined): Pending<Value> {
     const o = (i: number, n: string) => opt(args, named, i, n);
     switch (name) {
       case 'name':
@@ -604,16 +612,25 @@ export class MacroSession implements VbaHost {
       case 'run': {
         if (!args.length) throw new VbError(449, 'Run needs the name of a macro.');
         const target = toStr(args[0]).replace(/^.*!/, '').replace(/^'|'$/g, '');
-        return this.program.run(this, target, args.slice(1));
+        return this.program.call(this, target, args.slice(1));
       }
       case 'wait': {
         const when = o(0, 'time');
         const serial = when instanceof VbDate ? when.serial : toNum(when ?? 0);
         const now = (Date.now() - new Date().getTimezoneOffset() * 60000) / 86400000 + 25569;
-        await this.sleep((serial - now) * 86400000);
-        return true;
+        return this.sleep((serial - now) * 86400000).then(() => true);
       }
-      case 'inputbox': {
+      case 'inputbox':
+        return this.askInput(o);
+      default:
+        return this.applicationRest(name, args, named);
+    }
+  }
+
+  /** Application.InputBox: asks until the answer fits the requested type. */
+  private async askInput(o: (i: number, n: string) => Value | undefined): Promise<Value> {
+    {
+      {
         const prompt = toStr(o(0, 'prompt') ?? '');
         const title = toStr(o(1, 'title') ?? 'Input');
         const dflt = o(2, 'default');
@@ -641,6 +658,12 @@ export class MacroSession implements VbaHost {
           return answer;
         }
       }
+    }
+  }
+
+  private applicationRest(name: string, args: Value[], named: Record<string, Value> | undefined): Value {
+    const o = (i: number, n: string) => opt(args, named, i, n);
+    switch (name) {
       case 'goto': {
         const ref = o(0, 'reference');
         if (ref === undefined) return EMPTY;
@@ -666,7 +689,8 @@ export class MacroSession implements VbaHost {
       case 'undo':
         throw new VbError(1004, "Macros can't undo — press Ctrl+Z after the macro finishes.");
       case 'caller':
-        throw new VbError(1004, 'Application.Caller is only available to macros started by a button.');
+        if (this.caller) return new RangeObj(this, this.caller.sheet, [{ r1: this.caller.row, c1: this.caller.col, r2: this.caller.row, c2: this.caller.col }]);
+        throw new VbError(1004, 'Application.Caller is only available to macros started by a button, or to functions used in cells.');
       case 'international':
         return toNum(args[0] ?? 0) === 32 ? '.' : '';
     }
@@ -724,7 +748,7 @@ class ApplicationObj implements VbObject {
   readonly vbType = 'Application';
   constructor(private s: MacroSession) {}
 
-  get(name: string, args: Value[], named?: Record<string, Value>): Promise<Value> {
+  get(name: string, args: Value[], named?: Record<string, Value>): Pending<Value> {
     return this.s.appMember(name, args, named, null);
   }
 
@@ -752,7 +776,7 @@ class WorkbookObj implements VbObject {
   readonly vbType = 'Workbook';
   constructor(private s: MacroSession) {}
 
-  async get(name: string, args: Value[], named?: Record<string, Value>): Promise<Value> {
+  get(name: string, args: Value[], named?: Record<string, Value>): Value | Promise<Value> {
     const doc = this.s.doc;
     switch (name) {
       case 'name':
@@ -1269,7 +1293,7 @@ class WindowObj implements VbObject {
     return this.s.activeSheet();
   }
 
-  get(name: string): Value | Promise<Value> {
+  get(name: string): Pending<Value> {
     const sheet = this.sheet;
     switch (name) {
       case 'freezepanes':
@@ -1339,3 +1363,60 @@ class IgnoredObj implements VbObject {
   }
 }
 
+/** A cell error as the VBA value a function receives (CVErr). */
+export function vbErrorValue(e: ErrorValue): VbObject {
+  return cvErr(ERR_NUM[e.code] ?? 2015);
+}
+
+/** The cell error for a VBA error value a function returned. */
+export function cellError(v: VbObject): ErrorValue {
+  return errFromVb(toNum(v.dflt?.([]) as Value));
+}
+
+/**
+ * Where a Function runs when a formula calls it (=VAULTVALUE("Rent", "$")). Like in Excel, it can
+ * read anything in the workbook but not change it, and it can't stop to show a message.
+ */
+export class CellSession extends MacroSession {
+  constructor(doc: Doc, program: VbaProgram, caller: { sheet: Sheet; row: number; col: number }) {
+    const cell = { r1: caller.row, c1: caller.col, r2: caller.row, c2: caller.col };
+    const refuse = (what: string) => () => Promise.reject(new VbError(1004, `A function used in a cell can't ${what}.`));
+    // No screen: ActiveCell and Selection are the cell being calculated
+    const ui: MacroUI = {
+      msgBox: refuse('show messages'),
+      inputBox: refuse('ask questions'),
+      save: refuse('save the workbook'),
+      print: () => undefined,
+      status: () => undefined,
+      selection: () => ({ sheet: caller.sheet, ranges: [cell], active: { row: caller.row, col: caller.col } }),
+      select: () => undefined,
+      activate: () => undefined,
+    };
+    super(doc, ui, program, 'Calculate');
+    this.caller = caller;
+  }
+
+  override edit(): void {
+    throw new VbError(1004, "A function used in a cell can't change cells, sheets or formatting. It can only return a value.");
+  }
+
+  override settle(): void {
+    // nothing is ever pending: a cell function doesn't change anything
+  }
+
+  override tick(): void {
+    // a recalculation never pauses
+  }
+
+  override msgBox(): Promise<number> {
+    throw new VbError(1004, "A function used in a cell can't show messages.");
+  }
+
+  override inputBox(): Promise<string | null> {
+    throw new VbError(1004, "A function used in a cell can't ask questions.");
+  }
+
+  override finish(): void {
+    // nothing to record
+  }
+}

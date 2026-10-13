@@ -80,6 +80,12 @@ export class MacroProject {
     return this.modules.some((m) => /\S/.test(stripOptions(m.code)));
   }
 
+  /** Whether a standard module declares a public Function with this name (one formulas can call). */
+  definesFunction(name: string): boolean {
+    const re = new RegExp(`^[ \\t]*(?:Public[ \\t]+)?Function[ \\t]+${name.replace(/[^A-Za-z0-9_]/g, '')}\\b`, 'im');
+    return this.modules.some((m) => m.kind === 'standard' && re.test(m.code));
+  }
+
   module(name: string): VbaModule | undefined {
     const n = name.toLowerCase();
     return this.modules.find((m) => m.name.toLowerCase() === n);

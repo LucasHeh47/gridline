@@ -91,6 +91,25 @@ Sub LogEntry()
 End Sub
 ```
 
+## Your own functions in cells
+
+A `Function` in a module works in formulas too, just like in Excel:
+
+```vb
+Function TAX(gross As Double, Optional rate As Double = 0.25) As Double
+    TAX = gross * rate
+End Function
+```
+
+Then `=TAX(B2)` or `=TAX(B2, 0.3)` in any cell. Gridline uses the same rules as Excel:
+
+- **Which functions:** `Public` (or plain) Functions in standard modules (Module1…). Private functions, and functions in sheet or ThisWorkbook modules, can't be used in cells.
+- **Arguments:** a cell reference passed to a `Variant` or `Range` parameter arrives as a Range, so the code can read `.Value`, `.NumberFormat`, `.Text` or loop over the cells. A typed parameter (`As String`, `As Double`…) gets the cell's value.
+- **Results:** a function can return a number, text, True/False, a date, an error (`CVErr(xlErrNA)` shows `#N/A`) or an array, which spills into the cells next to it.
+- **Recalculating:** a function recalculates when its arguments change. If it reads other cells itself (like a lookup on a settings sheet), add `Application.Volatile`, and it recalculates after every change.
+- **Read-only:** like in Excel, a function used in a cell can read the whole workbook but can't change cells, sheets or formatting, and it can't show message boxes. `Application.Caller` is the cell it's calculating.
+- **Security:** these functions only run while the workbook's macros are on. Until you click **Enable macros**, their cells show the result last saved in the file.
+
 ## Step macros (no code, Beta)
 
 Most people don't write code, so Gridline can also build macros from **steps**, like the Shortcuts app

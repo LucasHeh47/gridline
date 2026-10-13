@@ -224,6 +224,12 @@ function binary(node: Node & { t: 'bin' }, ctx: Ctx, snap = false): Value {
 function callFunction(node: Node & { t: 'func' }, ctx: Ctx): Value {
   const def = FUNCTIONS.get(node.name);
   if (!def) {
+    // A Function in the workbook's VBA code
+    const udf = ctx.udf?.(node.name);
+    if (udf) return udf.call(ctx, node.args.map((a) => (a.t === 'missing' ? undefined : evaluate(a, ctx))));
+    if (ctx.wb.macros?.definesFunction(node.name)) {
+      return Errors.name(`${node.name} is a function in this workbook's macros. Turn macros on (Enable macros, above the sheet) to calculate it.`);
+    }
     const sug = suggestFunction(node.name);
     return Errors.name(
       `There's no function called ${node.name}.` + (sug ? ` Did you mean ${sug}?` : ' Check the spelling.'),

@@ -6,7 +6,7 @@ import type { Sheet, Workbook } from '../workbook';
 import { evaluate, evaluateFormula } from './evaluator';
 import { FUNCTIONS, VOLATILE_FUNCS } from './functions';
 import { parseFormula, type Node, type ParsedFormula } from './parser';
-import { Matrix, RangeRef, type Ctx, type Value } from './types';
+import { Matrix, RangeRef, type Ctx, type UserFunction, type Value } from './types';
 
 const SHEET_SHIFT = 17_179_869_184; // 2^34 > MAX_ROWS * MAX_COLS
 const MAX_DEPTH = 400;
@@ -82,6 +82,11 @@ export class Engine {
   private depth = 0;
   /** Bumped after each recalculation, so caches (conditional formatting, charts) know to refresh. */
   version = 0;
+  /**
+   * Functions from the workbook's VBA code (set while its macros may run). After changing it,
+   * call rebuild() so formulas using them recalculate.
+   */
+  userFunctions: ((name: string) => UserFunction | null) | null = null;
 
   constructor(private wb: Workbook) {}
 
@@ -165,6 +170,12 @@ export class Engine {
     this.invalidate([...this.externals]);
     this.recalc();
     return true;
+  }
+
+  /** Whether any formula calls a function that isn't built in (one from the workbook's VBA code). */
+  callsUnknownFunctions(): boolean {
+    for (const info of this.formulas.values()) for (const f of info.parsed.funcs) if (!FUNCTIONS.has(f)) return true;
+    return false;
   }
 
   /** Whether any formula in the workbook uses Gridline-only functions (NFL, live prices…). */
@@ -300,8 +311,15 @@ export class Engine {
     for (const f of parsed.funcs) {
       if (VOLATILE_FUNCS.has(f)) info.volatile = true;
       const def = FUNCTIONS.get(f);
-      if (!def) info.unsupported.push(f);
-      else if (def.external) usesExternal = true;
+      if (def) {
+        if (def.external) usesExternal = true;
+        continue;
+      }
+      // VBA functions can read any cell, so the ones marked Application.Volatile always recalculate
+      const udf = this.userFunctions?.(f);
+      if (udf) {
+        if (udf.volatile) info.volatile = true;
+      } else info.unsupported.push(f);
     }
     const addRef = (sheetName: string | undefined, r1: number, c1: number, r2: number, c2: number) => {
       const target = sheetName !== undefined ? this.wb.sheetByName(sheetName) : sheet;
@@ -608,6 +626,7 @@ export class Engine {
       sheet,
       row,
       col,
+      udf: (name: string) => engine.userFunctions?.(name) ?? null,
       dr,
       dc,
       scope: null,
