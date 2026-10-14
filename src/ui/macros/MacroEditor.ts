@@ -3,6 +3,7 @@
 // Bottom: output from Debug.Print and messages about runs and errors.
 import * as L from 'lucide';
 import type { StepMacro, VbaModule } from '../../core/macros/project';
+import { withStepVariables, type StepVariable } from '../../core/macros/steps';
 import type { App } from '../app';
 import { h, icon } from '../dom';
 import { confirmDialog, promptDialog, showMenu, toast, tooltip, type MenuItem } from '../widgets';
@@ -391,14 +392,15 @@ export class MacroEditor {
     this.textarea?.focus();
   }
 
-  async newStepMacro(example?: { name: string; description: string; steps: () => StepMacro['steps'] }): Promise<void> {
+  async newStepMacro(example?: { name: string; description: string; steps: () => StepMacro['steps']; variables?: () => StepVariable[] }): Promise<void> {
     const project = this.app.macros.ensureProject();
     let name = example?.name ?? 'New macro';
     let i = 2;
     const taken = (n: string) => project.stepMacros.some((m) => m.name.toLowerCase() === n.toLowerCase()) || this.app.macros.runner.list().some((m) => m.label.toLowerCase() === n.toLowerCase());
     const base = name;
     while (taken(name)) name = `${base} ${i++}`;
-    const sm: StepMacro = { id: 'sm' + Math.random().toString(36).slice(2, 9), name, description: example?.description, steps: example?.steps() ?? [] };
+    const steps = example?.steps() ?? [];
+    const sm: StepMacro = { id: 'sm' + Math.random().toString(36).slice(2, 9), name, description: example?.description, steps, variables: withStepVariables(steps, example?.variables?.()) };
     project.stepMacros.push(sm);
     project.changed();
     this.app.doc.touch();

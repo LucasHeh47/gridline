@@ -90,6 +90,13 @@ const subject = (key = 'range', dflt = 'A1'): StepField => ({ key, label: 'Cell 
 
 const NUMBER_HINT = 'A number, {Variable} or [B2]';
 
+/** Where a variable's value comes from. */
+export const START_FROM: [string, string][] = [
+  ['value', 'the value'],
+  ['cell', 'the value in cell'],
+  ['formula', 'the result of'],
+];
+
 const MATH: [string, string][] = [
   ['add', 'add'],
   ['sub', 'subtract'],
@@ -459,12 +466,18 @@ export const STEPS: StepDef[] = [
     type: 'setVar',
     category: 'Variables',
     title: 'Set a variable',
-    sentence: 'Set {name} to {value}',
+    sentence: 'Set {name} to {from} {value}{cell}{formula}',
     icon: 'variable',
     sets: 'name',
-    fields: [variable(), { key: 'value', label: 'Value', kind: 'text', optional: true, placeholder: 'Text, a number, [B2] for a cell, or a formula like ={Price}*2' }],
+    fields: [
+      variable(),
+      { key: 'from', label: 'To', kind: 'choice', options: START_FROM, dflt: 'value' },
+      { key: 'value', label: 'Value', kind: 'text', optional: true, placeholder: 'Text, a number or {Variable}', when: { key: 'from', is: ['value'] } },
+      { ...range('cell', 'Cell', 'B2'), when: { key: 'from', is: ['cell'] } },
+      { key: 'formula', label: 'Formula', kind: 'text', dflt: '=', placeholder: '=SUM(B2:B10) or ={Price}*2', when: { key: 'from', is: ['formula'] } },
+    ],
     compile: (a, c) => {
-      const value = c.value(a.value, true).expr;
+      const value = c.start({ name: a.name, from: (a.from as StepVariable['from']) ?? 'value', value: a.from === 'cell' ? a.cell : a.from === 'formula' ? a.formula : a.value });
       return [`${c.setVariable(a.name)} = ${value}`];
     },
   },
@@ -992,6 +1005,109 @@ export function variablesSetIn(steps: Step[]): string[] {
   return [...seen.values()];
 }
 
+// ---------- a macro's variables ----------
+
+/** A variable listed under a step macro's Variables, with the value it starts with. */
+export interface StepVariable {
+  name: string;
+  /** The value as typed ('value'), the value of the cell `value` names ('cell'), or a formula's result. */
+  from?: 'value' | 'cell' | 'formula';
+  value?: string;
+}
+
+/** Names Gridline gives a meaning to, so they can't be variable names. */
+const RESERVED: Record<string, string> = {
+  today: 'today’s date',
+  now: 'the date and time',
+  row: 'For each row',
+  count: 'Repeat',
+  cell: 'For each cell',
+  value: 'For each cell',
+  item: 'For each item',
+  sheet: 'For each sheet',
+};
+
+/** Why a name can't be used for a new (or renamed) variable, or null when it can. */
+export function variableNameProblem(name: string, others: string[]): string | null {
+  const t = name.trim();
+  if (!t) return 'Give the variable a name.';
+  if (!/^[A-Za-z][A-Za-z0-9 _]*$/.test(t)) return 'Start with a letter, and use only letters, numbers, spaces and _.';
+  if (t.length > 40) return 'Keep the name under 40 characters.';
+  const reserved = RESERVED[t.toLowerCase()];
+  if (reserved) return `{${t}} already means ${reserved.startsWith('For') || reserved === 'Repeat' ? `something inside “${reserved}”` : reserved}. Pick another name.`;
+  const id = varId(t).toLowerCase();
+  const same = others.find((o) => varId(o).toLowerCase() === id);
+  if (same) return same.trim() === t ? `There’s already a variable named {${same}}.` : `That’s the same as {${same}} (capitals, spaces and _ don’t count). Pick another name.`;
+  return null;
+}
+
+/** Whether two names are the same variable (VBA ignores capitals; spaces become _). */
+export function sameVariable(a: string, b: string): boolean {
+  return varId(a).toLowerCase() === varId(b).toLowerCase();
+}
+
+/** Whether text is a cell address like B2, $B$2, Sheet2!B2 or 'My sheet'!B2:C9. */
+export function looksLikeCell(s: string): boolean {
+  return CELLISH.test(s.trim());
+}
+
+/** A name that isn't taken yet: Total, Total2, Total3… */
+export function unusedVariableName(base: string, others: string[]): string {
+  const b = base.trim() || 'Variable';
+  for (let i = 1; ; i++) {
+    const n = i === 1 ? b : `${b}${i}`;
+    if (!variableNameProblem(n, others)) return n;
+  }
+}
+
+/** Whether a step stores something in a variable or mentions it as {Name}. */
+export function stepUsesVariable(step: Step, name: string): boolean {
+  const id = varId(name).toLowerCase();
+  const def = STEP_BY_TYPE.get(step.type);
+  for (const f of def?.fields ?? []) if (f.kind === 'variable' && varId(step.args[f.key] ?? f.dflt ?? '').toLowerCase() === id) return true;
+  return Object.values(step.args).some((v) => [...v.matchAll(VAR_REF)].some((m) => varId(m[1]).toLowerCase() === id));
+}
+
+/** How many steps (inside blocks too) use a variable. */
+export function countStepsUsing(steps: Step[], name: string): number {
+  let n = 0;
+  for (const s of steps) n += (stepUsesVariable(s, name) ? 1 : 0) + countStepsUsing(s.body ?? [], name) + countStepsUsing(s.elseBody ?? [], name);
+  return n;
+}
+
+/** Renames a variable everywhere the steps (and the other variables' starting values) use it. */
+export function renameVariable(steps: Step[], from: string, to: string, variables: StepVariable[] = []): void {
+  const id = varId(from).toLowerCase();
+  for (const v of variables) if (v.value) v.value = v.value.replace(VAR_REF, (m, n: string) => (varId(n).toLowerCase() === id ? `{${to}}` : m));
+  for (const s of steps) {
+    const def = STEP_BY_TYPE.get(s.type);
+    for (const f of def?.fields ?? []) {
+      const v = s.args[f.key] ?? (f.kind === 'variable' ? f.dflt : undefined);
+      if (v === undefined) continue;
+      if (f.kind === 'variable') {
+        if (varId(v).toLowerCase() === id) s.args[f.key] = to;
+      } else s.args[f.key] = v.replace(VAR_REF, (m, n: string) => (varId(n).toLowerCase() === id ? `{${to}}` : m));
+    }
+    renameVariable(s.body ?? [], from, to);
+    renameVariable(s.elseBody ?? [], from, to);
+  }
+}
+
+/** The variables listed for a macro: the given ones plus any the steps store something in. */
+export function withStepVariables(steps: Step[], vars: StepVariable[] = []): StepVariable[] {
+  const out = [...vars];
+  for (const name of variablesSetIn(steps)) if (!out.some((v) => varId(v.name).toLowerCase() === varId(name).toLowerCase())) out.push({ name });
+  return out;
+}
+
+/** "0", "the value in B2", "=SUM(A:A)", or "" when it starts empty. */
+export function describeStart(v: StepVariable): string {
+  const t = (v.value ?? '').trim();
+  if (v.from === 'cell') return t ? `the value in ${t}` : '';
+  if (v.from === 'formula') return t && t !== '=' ? (t.startsWith('=') ? t : `=${t}`) : '';
+  return t;
+}
+
 // ---------- compiler ----------
 
 const IDENT = /[^A-Za-z0-9_]/g;
@@ -1107,9 +1223,40 @@ export class Compiler {
   readonly helpers = new Set<string>();
   readonly problems: string[] = [];
 
-  /** `known`: the variables the whole macro sets, so a loop can use one that's set further down. */
-  constructor(known: string[] = []) {
+  /** The macro's Variables list (lower-case VBA names → as typed), when it has one. */
+  private listed: Map<string, string> | null = null;
+  private outsideList = new Map<string, string>();
+
+  /**
+   * `known`: the variables the whole macro sets, so a loop can use one that's set further down.
+   * `listed`: the macro's Variables list; steps may then only use variables on it.
+   */
+  constructor(known: string[] = [], listed?: string[]) {
     for (const name of known) this.setVars.add(varId(name).toLowerCase());
+    if (listed) {
+      this.listed = new Map(listed.map((n) => [varId(n).toLowerCase(), n.trim()]));
+      for (const id of this.listed.keys()) this.setVars.add(id);
+    }
+  }
+
+  /** What a variable starts as, or is set to: a value as typed, a cell's value, or a formula's result. */
+  start(v: StepVariable): string {
+    const t = (v.value ?? '').trim();
+    if (v.from === 'cell') {
+      if (!t) this.problems.push(`{${v.name}} should get the value of a cell, but no cell is chosen.`);
+      return `${this.range(t || 'A1')}.Value`;
+    }
+    if (v.from === 'formula') {
+      const f = t.replace(/^=/, '');
+      if (!f) this.problems.push(`{${v.name}} should get a formula’s result, but the formula is empty.`);
+      return f ? `Evaluate(${this.formula(f)})` : '""';
+    }
+    return this.value(t, true).expr;
+  }
+
+  /** Notes a variable that isn't on the macro's Variables list. */
+  private checkListed(id: string, name: string): void {
+    if (this.listed && !this.listed.has(id) && !this.outsideList.has(id)) this.outsideList.set(id, name);
   }
 
   /** A VBA string literal. */
@@ -1291,6 +1438,7 @@ export class Compiler {
     if (!(name ?? '').trim()) this.problems.push('A step is missing the name of its variable.');
     const id = this.variable(name);
     this.setVars.add(id.toLowerCase());
+    this.checkListed(id.toLowerCase(), (name ?? '').trim());
     return id;
   }
 
@@ -1323,6 +1471,7 @@ export class Compiler {
       return '0';
     }
     if (!this.usedVars.has(id.toLowerCase())) this.usedVars.set(id.toLowerCase(), n);
+    this.checkListed(id.toLowerCase(), n);
     return id;
   }
 
@@ -1391,6 +1540,15 @@ export class Compiler {
 
   /** Variables used in text but never given a value, with a guess at what was meant. */
   checkVariables(): void {
+    if (this.listed) {
+      // Every variable is on the list, so anything else is a typo or a deleted variable
+      const listed = [...this.listed.keys()];
+      for (const [id, name] of this.outsideList) {
+        const guess = listed.find((k) => close(k, id));
+        this.problems.push(`{${name}} isn’t one of this macro’s variables.${guess ? ` Did you mean {${this.listed.get(guess)}}?` : ' Add it with “New variable”, or pick another one.'}`);
+      }
+      return;
+    }
     const known = [...this.setVars];
     for (const [id, name] of this.usedVars) {
       if (this.setVars.has(id)) continue;
@@ -1430,22 +1588,34 @@ function close(a: string, b: string): boolean {
  * The VBA for one step macro, as a Sub named `procName`. `helpers` names the helper functions it
  * calls; put stepHelperCode(helpers) once in the same module.
  */
-export function compileStepMacro(procName: string, steps: Step[], description?: string): { code: string; problems: string[]; helpers: string[] } {
-  const c = new Compiler(variablesSetIn(steps));
+export function compileStepMacro(procName: string, steps: Step[], description?: string, variables?: StepVariable[]): { code: string; problems: string[]; helpers: string[] } {
+  const c = new Compiler(variablesSetIn(steps), variables?.map((v) => v.name));
+  // Starting values, in the order the variables are listed
+  const starts: string[] = [];
+  for (const v of variables ?? []) {
+    const id = c.variable(v.name);
+    const what = describeStart(v);
+    if (!what) {
+      if (v.from === 'cell') c.problems.push(`{${v.name.trim()}} should get the value of a cell, but no cell is chosen.`);
+      continue;
+    }
+    const expr = c.start(v);
+    starts.push(`' {${v.name.trim()}} starts as ${what}`, `${id} = ${expr}`);
+  }
   const body = c.steps(steps);
   c.checkVariables();
   const lines = [`Sub ${procName}()`];
   if (description) lines.push(`    ' ${description.replace(/\r?\n/g, ' ')}`);
   for (const d of c.declarations()) lines.push('    ' + d);
   if (c.declarations().length) lines.push('');
-  for (const l of body) lines.push('    ' + l);
+  for (const l of [...starts, ...body]) lines.push('    ' + l);
   lines.push('    Application.StatusBar = False');
   lines.push('End Sub');
   return { code: lines.join('\r\n'), problems: [...new Set(c.problems)], helpers: [...c.helpers] };
 }
 
 /** Ready-made step macros shown as examples in the builder. */
-export const STEP_EXAMPLES: { name: string; description: string; steps: () => Step[] }[] = [
+export const STEP_EXAMPLES: { name: string; description: string; steps: () => Step[]; variables?: () => StepVariable[] }[] = [
   {
     name: 'Log today',
     description: 'Adds a row with today’s date to the bottom of a list.',
@@ -1480,13 +1650,12 @@ export const STEP_EXAMPLES: { name: string; description: string; steps: () => St
       const cond = withArgs(newStep('if'), { range: 'D{Row}', op: '=', value: 'Paid' });
       cond.body = [withArgs(newStep('mathVar'), { name: 'Paid', op: 'add', amount: '[C{Row}]' }), withArgs(newStep('mathVar'), { name: 'Rows', op: 'add', amount: '1' })];
       loop.body = [cond];
-      return [
-        withArgs(newStep('setVar'), { name: 'Paid', value: '0' }),
-        withArgs(newStep('setVar'), { name: 'Rows', value: '0' }),
-        loop,
-        withArgs(newStep('message'), { text: '{Rows} paid rows, {Paid} in total' }),
-      ];
+      return [loop, withArgs(newStep('message'), { text: '{Rows} paid rows, {Paid} in total' })];
     },
+    variables: () => [
+      { name: 'Paid', from: 'value', value: '0' },
+      { name: 'Rows', from: 'value', value: '0' },
+    ],
   },
   {
     name: 'Monthly report sheet',

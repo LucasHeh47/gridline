@@ -4,7 +4,20 @@ import type { Doc } from '../src/core/doc';
 import type { MacroUI } from '../src/core/macros/host';
 import { MacroProject } from '../src/core/macros/project';
 import { MacroRunner } from '../src/core/macros/runner';
-import { compileStepMacro, describeStep, newStep, STEP_EXAMPLES, variablesSetIn, type Step } from '../src/core/macros/steps';
+import {
+  compileStepMacro,
+  countStepsUsing,
+  describeStep,
+  newStep,
+  renameVariable,
+  STEP_EXAMPLES,
+  unusedVariableName,
+  variableNameProblem,
+  variablesSetIn,
+  withStepVariables,
+  type Step,
+  type StepVariable,
+} from '../src/core/macros/steps';
 import { addSheet } from '../src/core/ops/sheets';
 import type { Sheet } from '../src/core/workbook';
 import { makeDoc, val } from './helpers';
@@ -40,9 +53,9 @@ function s(type: string, args: Record<string, string> = {}, body?: Step[], elseB
   return step;
 }
 
-async function run(doc: Doc, steps: Step[], answers: string[] = []) {
+async function run(doc: Doc, steps: Step[], answers: string[] = [], variables?: StepVariable[]) {
   const project = (doc.wb.macros ??= new MacroProject());
-  project.stepMacros = [{ id: 'm', name: 'Test', steps }];
+  project.stepMacros = [{ id: 'm', name: 'Test', steps, variables }];
   project.changed();
   const out: string[] = [];
   const runner = new MacroRunner(
@@ -51,7 +64,7 @@ async function run(doc: Doc, steps: Step[], answers: string[] = []) {
   );
   runner.onPrint = (t) => out.push(t);
   const result = await runner.run('Test');
-  if (result.error) throw new Error(`${result.error.message}\n${compileStepMacro('Test', steps).code}`);
+  if (result.error) throw new Error(`${result.error.message}\n${compileStepMacro('Test', steps, undefined, variables).code}`);
   return { out, problems: runner.errors().map((e) => e.message) };
 }
 
@@ -261,8 +274,11 @@ describe('step macro builder helpers', () => {
 
   it('runs the new examples', async () => {
     const doc = makeDoc({ C2: '250', C3: '50', C4: '20', D2: 'Paid', D3: 'Due', D4: 'paid', A2: 'x', A3: 'y', A4: 'z' });
-    const { out } = await run(doc, STEP_EXAMPLES.find((e) => e.name === 'Add up paid amounts')!.steps());
+    const ex = STEP_EXAMPLES.find((e) => e.name === 'Add up paid amounts')!;
+    const steps = ex.steps();
+    const { out, problems } = await run(doc, steps, [], withStepVariables(steps, ex.variables!()));
     expect(out).toContain('msg:2 paid rows, 270 in total');
+    expect(problems).toEqual([]);
     const doc2 = makeDoc();
     await run(doc2, STEP_EXAMPLES.find((e) => e.name === 'A sheet per quarter')!.steps());
     expect(doc2.wb.sheets.map((x) => x.name).slice(1)).toEqual(['Q1', 'Q2', 'Q3', 'Q4']);
@@ -270,3 +286,97 @@ describe('step macro builder helpers', () => {
   });
 });
 
+describe("a step macro's Variables list", () => {
+  it('checks names: any name, but no duplicates or reserved names', () => {
+    const others = ['Total', 'Due date'];
+    expect(variableNameProblem('Price', others)).toBeNull();
+    expect(variableNameProblem('Tax rate 2', others)).toBeNull();
+    expect(variableNameProblem('', others)).toBe('Give the variable a name.');
+    expect(variableNameProblem('Total', others)).toBe('There’s already a variable named {Total}.');
+    expect(variableNameProblem('total', others)).toContain('same as {Total}');
+    expect(variableNameProblem('Due_date', others)).toContain('same as {Due date}');
+    expect(variableNameProblem('2nd', others)).toContain('Start with a letter');
+    expect(variableNameProblem('a-b', others)).toContain('only letters');
+    expect(variableNameProblem('Row', others)).toContain('For each row');
+    expect(variableNameProblem('Today', others)).toContain('today’s date');
+    expect(unusedVariableName('Total', others)).toBe('Total2');
+    expect(unusedVariableName('Answer', others)).toBe('Answer');
+  });
+
+  it('starts variables as a value, a cell’s value or a formula’s result', async () => {
+    const doc = makeDoc({ B2: '120', B3: 'Ada' });
+    doc.transact('add', (tx) => addSheet(tx, doc.wb, 'Rates', 1));
+    doc.wb.activeSheetId = doc.wb.sheets[0].id;
+    const rates = doc.wb.sheetByName('Rates')!;
+    doc.transact('rate', (tx) => tx.setCell(rates, 0, 0, { v: 0.25 }));
+    const variables: StepVariable[] = [
+      { name: 'Price', from: 'cell', value: 'B2' },
+      { name: 'Who', from: 'cell', value: 'B3' },
+      { name: 'Rate', from: 'cell', value: 'Rates!A1' },
+      { name: 'Label', from: 'value', value: 'Total for {Who}' },
+      { name: 'With tax', from: 'formula', value: '={Price}*(1+{Rate})' },
+      { name: 'Empty one' },
+    ];
+    const { problems } = await run(
+      doc,
+      [
+        s('setValue', { range: 'C1', value: '{Price}' }),
+        s('setValue', { range: 'C2', value: '{Label}' }),
+        s('setValue', { range: 'C3', value: '{With tax}' }),
+        s('setValue', { range: 'C4', value: 'x{Empty one}x' }),
+        // Setting a variable later, from a cell and from a formula
+        s('setVar', { name: 'Price', from: 'cell', cell: 'B3' }),
+        s('setValue', { range: 'C5', value: '{Price}' }),
+        s('setVar', { name: 'Price', from: 'formula', formula: '=LEN({Who})*10' }),
+        s('setValue', { range: 'C6', value: '{Price}' }),
+      ],
+      [],
+      variables,
+    );
+    expect(problems).toEqual([]);
+    expect([val(doc, 'C1'), val(doc, 'C2'), val(doc, 'C3'), val(doc, 'C4'), val(doc, 'C5'), val(doc, 'C6')]).toEqual([120, 'Total for Ada', 150, 'xx', 'Ada', 30]);
+    const { code } = compileStepMacro('T', [], undefined, variables);
+    expect(code).toContain("' {Price} starts as the value in B2");
+    expect(code).toContain('v_Price = Range("B2").Value');
+    expect(code).toContain('v_Rate = Worksheets("Rates").Range("A1").Value');
+    expect(code).toContain('Dim v_Empty_one As Variant');
+  });
+
+  it('only lets steps use variables on the list', () => {
+    const steps = [s('mathVar', { name: 'Totl', op: 'add', amount: '1' }), s('message', { text: '{Total} and {Nope}' })];
+    const { problems } = compileStepMacro('T', steps, undefined, [{ name: 'Total', value: '0' }]);
+    expect(problems).toEqual(['{Totl} isn’t one of this macro’s variables. Did you mean {Total}?', '{Nope} isn’t one of this macro’s variables. Add it with “New variable”, or pick another one.']);
+    // Without a list (macros made earlier) any name works, as before
+    expect(compileStepMacro('T', [s('mathVar', { name: 'Totl' })]).problems).toEqual([]);
+  });
+
+  it('warns about a missing cell; a formula left as "=" starts empty', () => {
+    const { problems } = compileStepMacro('T', [], undefined, [
+      { name: 'A', from: 'cell', value: '' },
+      { name: 'B', from: 'formula', value: '=' },
+    ]);
+    expect(problems).toEqual(['{A} should get the value of a cell, but no cell is chosen.']);
+  });
+
+  it('renames a variable in every step, and counts the steps using one', () => {
+    const steps = [
+      s('setVar', { name: 'Total', value: '1' }),
+      s('repeat', { times: '{total}' }, [s('mathVar', { name: 'TOTAL', op: 'add', amount: '{Total}' }), s('message', { text: 'Now {Total}, not {Totals}' })]),
+    ];
+    expect(countStepsUsing(steps, 'Total')).toBe(4);
+    const vars: StepVariable[] = [{ name: 'Total' }, { name: 'Twice', from: 'formula', value: '={Total}*2' }];
+    renameVariable(steps, 'Total', 'Sum', vars);
+    expect(vars[1].value).toBe('={Sum}*2');
+    expect(steps[0].args.name).toBe('Sum');
+    expect(steps[1].args.times).toBe('{Sum}');
+    expect(steps[1].body![0].args).toMatchObject({ name: 'Sum', amount: '{Sum}' });
+    expect(steps[1].body![1].args.text).toBe('Now {Sum}, not {Totals}');
+    expect(countStepsUsing(steps, 'Total')).toBe(0);
+  });
+
+  it('lists the variables of macros made before the list existed', () => {
+    const steps = [s('setVar', { name: 'Paid' }), s('ask', { name: 'Answer' }), s('mathVar', { name: 'paid' })];
+    expect(withStepVariables(steps).map((v) => v.name)).toEqual(['Paid', 'Answer']);
+    expect(withStepVariables(steps, [{ name: 'Answer', value: 'x' }])).toEqual([{ name: 'Answer', value: 'x' }, { name: 'Paid' }]);
+  });
+});

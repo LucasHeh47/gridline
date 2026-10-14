@@ -15,7 +15,7 @@ function docWithMacros(): Doc {
   project.addModule('standard', 'Module1', 'Sub Main()\r\n    Range("B1").Value = 42\r\nEnd Sub');
   project.setCode('ThisWorkbook', 'Private Sub Workbook_Open()\r\n    Range("C1").Value = "opened"\r\nEnd Sub');
   project.shortcuts.push({ macro: 'Module1.Main', keys: 'Ctrl+Shift+M' });
-  project.stepMacros.push({ id: 'x', name: 'Color it', steps: [newStep('fill')] });
+  project.stepMacros.push({ id: 'x', name: 'Color it', steps: [newStep('fill')], variables: [{ name: 'Price', from: 'cell', value: 'B2' }] });
   project.triggers.push({ id: 't', macro: 'Color it', event: 'open' });
   doc.wb.sheets[0].buttons.push({ id: 'b1', label: 'Run', macro: 'Module1.Main', anchor: { row: 2, col: 1, dx: 4, dy: 4, w: 120, h: 32 } });
   return doc;
@@ -43,6 +43,7 @@ describe('.xlsm files', () => {
     expect(p.module('Module1')!.code).toBe('Sub Main()\r\n    Range("B1").Value = 42\r\nEnd Sub');
     expect(p.module('ThisWorkbook')!.code).toContain('Workbook_Open');
     expect(p.stepMacros[0].name).toBe('Color it');
+    expect(p.stepMacros[0].variables).toEqual([{ name: 'Price', from: 'cell', value: 'B2' }]);
     expect(p.triggers[0].event).toBe('open');
     expect(p.shortcuts).toEqual([{ macro: 'Module1.Main', keys: 'Ctrl+Shift+M' }]);
     expect(wb.sheets[0].buttons[0]).toMatchObject({ label: 'Run', macro: 'Module1.Main' });

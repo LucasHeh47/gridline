@@ -59,7 +59,7 @@ export function compiledProject(p: MacroProject | null | undefined): { program: 
   if (project.stepMacros.length) {
     const helpers = new Set<string>();
     const subs = project.stepMacros.map((m) => {
-      const out = compileStepMacro(macroProcName(m.name), m.steps, m.description);
+      const out = compileStepMacro(macroProcName(m.name), m.steps, m.description, m.variables);
       for (const pr of out.problems) stepErrors.push({ module: m.name, line: 0, message: pr });
       for (const h of out.helpers) helpers.add(h);
       return out.code;
