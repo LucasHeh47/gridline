@@ -7,24 +7,33 @@ import { formatRange, quoteSheetName } from '../../core/address';
 import type { StepMacro } from '../../core/macros/project';
 import {
   compileStepMacro,
+  countStepsUsing,
+  describeStart,
   describeStep,
   fieldShown,
+  looksLikeCell,
   macroProcName,
   newStep,
+  renameVariable,
+  sameVariable,
   STEP_BY_TYPE,
   STEP_CATEGORIES,
   STEP_EXAMPLES,
   stepHelperCode,
   STEPS,
-  variablesSetIn,
+  stepUsesVariable,
+  unusedVariableName,
+  variableNameProblem,
+  withStepVariables,
   type Provided,
   type Step,
   type StepDef,
   type StepField,
+  type StepVariable,
 } from '../../core/macros/steps';
 import type { App } from '../app';
 import { h, icon } from '../dom';
-import { Popover, promptDialog, tooltip } from '../widgets';
+import { confirmDialog, dialog, Popover, promptDialog, tooltip } from '../widgets';
 import { highlightCode } from './highlight';
 
 const ICONS = L as unknown as Record<string, L.IconNode>;
@@ -42,14 +51,6 @@ function holds(step: Step, list: Step[]): boolean {
     if (inner === list || inner.some((s) => holds(s, list))) return true;
   }
   return false;
-}
-
-/** Whether a step sets or mentions a variable. */
-function mentions(step: Step, name: string): boolean {
-  const n = name.trim().toLowerCase();
-  const def = STEP_BY_TYPE.get(step.type);
-  if (def?.sets && (step.args[def.sets] ?? '').trim().toLowerCase() === n) return true;
-  return Object.values(step.args).some((v) => v.toLowerCase().includes(`{${n}}`));
 }
 
 const ALWAYS: Provided[] = [
@@ -79,7 +80,9 @@ export class StepBuilder {
     this.listEl = h('div', { class: 'sb-list' });
     this.codeEl = h('div', { class: 'sb-code', hidden: true });
     this.problemsEl = h('div', { class: 'sb-problems', hidden: true });
-    this.varsEl = h('div', { class: 'sb-vars', hidden: true });
+    this.varsEl = h('div', { class: 'sb-vars' });
+    // Macros made before variables had a list get one with the names their steps use
+    this.macro.variables ??= withStepVariables(this.macro.steps);
     const codeBtn = h('button', { class: 'btn outline', onclick: () => this.toggleCode(codeBtn) }, icon(L.Code, 14), 'Show code') as HTMLButtonElement;
     tooltip(codeBtn, 'See the VBA code these steps turn into');
     this.el = h(
@@ -132,7 +135,11 @@ export class StepBuilder {
   }
 
   private compiled() {
-    return compileStepMacro(macroProcName(this.macro.name), this.macro.steps, this.macro.description);
+    return compileStepMacro(macroProcName(this.macro.name), this.macro.steps, this.macro.description, this.macro.variables);
+  }
+
+  private get vars(): StepVariable[] {
+    return (this.macro.variables ??= []);
   }
 
   private renderCode(): void {
@@ -153,35 +160,134 @@ export class StepBuilder {
     this.problemsEl.replaceChildren(...problems.map((p) => h('div', { class: 'sb-problem' }, icon(L.TriangleAlert, 13), h('span', null, p))));
   }
 
-  /** The variables this macro sets, as chips that point out the steps using them. */
+  /** The macro's Variables: each with what it starts as, plus "New variable". */
   private renderVars(): void {
-    const names = variablesSetIn(this.macro.steps);
-    this.varsEl.hidden = !names.length;
+    const add = h('button', { class: 'btn outline sb-var-new', onclick: () => void this.createVariable().then((v) => v && this.render()) }, icon(L.Plus, 13), 'New variable');
+    const pills = this.vars.map((v) => {
+      const start = describeStart(v);
+      const pill = h(
+        'span',
+        { class: 'sb-var-pill' },
+        h('button', { class: 'sb-var-edit', onclick: () => void this.editVariable(v) }, h('code', null, `{${v.name}}`), start ? h('span', { class: 'sb-var-start' }, `= ${start}`) : null),
+        h('button', { class: 'sb-var-del', 'aria-label': `Delete {${v.name}}`, onclick: () => void this.deleteVariable(v) }, icon(L.X, 12)),
+      );
+      tooltip(pill.firstElementChild as HTMLElement, `Rename {${v.name}} or change what it starts as`);
+      // Hovering a variable points out the steps that use it
+      pill.addEventListener('mouseenter', () => this.pointOut(v.name, true));
+      pill.addEventListener('mouseleave', () => this.pointOut(v.name, false));
+      return pill;
+    });
     this.varsEl.replaceChildren(
-      h('span', { class: 'sb-vars-label' }, icon(L.Variable, 13), 'Variables'),
-      ...names.map((n) => {
-        const chip = h('button', { class: 'chip sb-var-chip', onclick: () => this.pointOut(n) }, `{${n}}`) as HTMLButtonElement;
-        tooltip(chip, `Show the steps that use {${n}}`);
-        return chip;
-      }),
+      h('div', { class: 'sb-vars-head' }, h('span', { class: 'sb-vars-label' }, icon(L.Variable, 14), 'Variables'), h('span', { class: 'sb-vars-hint' }, pills.length ? 'Use them in any box as {Name}.' : 'A variable keeps a value, like a total or a name, that steps can use and change.'), h('span', { class: 'spacer' }), add),
+      ...(pills.length ? [h('div', { class: 'sb-var-list' }, ...pills)] : []),
     );
-    // Suggestions for variable name boxes
-    let dl = document.getElementById('sb-var-names') as HTMLDataListElement | null;
-    if (!dl) document.body.append((dl = h('datalist', { id: 'sb-var-names' }) as HTMLDataListElement));
-    dl.replaceChildren(...names.map((n) => h('option', { value: n })));
   }
 
-  private pointOut(name: string): void {
-    let first: HTMLElement | null = null;
-    for (const [card, step] of this.cards) {
-      if (!mentions(step, name)) continue;
-      first ??= card;
-      card.classList.remove('hl');
-      void card.offsetWidth;
-      card.classList.add('hl');
-      setTimeout(() => card.classList.remove('hl'), 1600);
+  private pointOut(name: string, on: boolean): void {
+    for (const [card, step] of this.cards) card.classList.toggle('hl', on && stepUsesVariable(step, name));
+  }
+
+  /** Asks for a new variable (name and starting value) and adds it to the list. */
+  private async createVariable(suggestion?: string): Promise<StepVariable | null> {
+    const v = await this.variableDialog(null, suggestion);
+    if (!v) return null;
+    this.vars.push(v);
+    this.update();
+    return v;
+  }
+
+  private async editVariable(v: StepVariable): Promise<void> {
+    const next = await this.variableDialog(v);
+    if (!next) return;
+    if (next.name !== v.name) renameVariable(this.macro.steps, v.name, next.name, this.vars);
+    Object.assign(v, next);
+    this.render();
+    this.update();
+  }
+
+  private async deleteVariable(v: StepVariable): Promise<void> {
+    const n = countStepsUsing(this.macro.steps, v.name);
+    if (n && !(await confirmDialog('Delete variable', `${n} step${n === 1 ? ' uses' : 's use'} {${v.name}}. Delete it anyway? ${n === 1 ? 'That step' : 'Those steps'} will need another variable.`, 'Delete', true))) return;
+    this.macro.variables = this.vars.filter((x) => x !== v);
+    this.render();
+    this.update();
+  }
+
+  /** The New variable / edit dialog: a unique name, and what the variable starts as. */
+  private variableDialog(current: StepVariable | null, suggestion = 'Total'): Promise<StepVariable | null> {
+    const others = this.vars.filter((x) => x !== current).map((x) => x.name);
+    const name = h('input', { class: 'input', value: current?.name ?? unusedVariableName(suggestion, others), spellcheck: false, 'aria-label': 'Name' }) as HTMLInputElement;
+    const from = h('select', { class: 'input', 'aria-label': 'Starts as' }) as HTMLSelectElement;
+    for (const [v, label] of [['value', 'Text or a number'], ['cell', 'The value in a cell'], ['formula', 'A formula’s result']]) from.append(h('option', { value: v }, label));
+    from.value = current?.from ?? 'value';
+    const value = h('input', { class: 'input', value: current?.value ?? '', spellcheck: false, 'aria-label': 'Starting value' }) as HTMLInputElement;
+    const selected = (() => {
+      const app = this.app;
+      const r = formatRange(app.sel.range);
+      const first = app.doc.wb.sheets.find((x) => !x.hidden);
+      return app.sheet === first ? r : `${quoteSheetName(app.sheet.name)}!${r}`;
+    })();
+    const useSel = h('button', { class: 'btn outline', onclick: () => ((value.value = selected), check()) }, icon(L.SquareDashedMousePointer, 13), `Use ${selected}`) as HTMLButtonElement;
+    const hint = h('div', { class: 'hint' });
+    const err = h('div', { class: 'hint sb-var-err' });
+    const shape = () => {
+      const k = from.value;
+      value.classList.toggle('mono', k === 'cell');
+      value.placeholder = k === 'cell' ? 'B2 or Sheet2!B2' : k === 'formula' ? '=SUM(B2:B10)' : 'Leave empty to start with nothing';
+      if (k === 'cell' && !value.value.trim()) value.value = selected;
+      if (k === 'formula' && !value.value.trim()) value.value = '=';
+      useSel.hidden = k !== 'cell';
+      hint.textContent =
+        k === 'cell'
+          ? 'Reads the cell when the macro starts. Steps can change the variable later; the cell stays as it is.'
+          : k === 'formula'
+            ? 'Calculated when the macro starts. It can use other variables, like ={Price}*2.'
+            : 'For example 0, Paid, or {Today}.';
+    };
+    const body = h(
+      'div',
+      { class: 'sb-var-dialog' },
+      h('div', { class: 'field' }, h('label', null, 'Name'), name),
+      h('div', { class: 'field' }, h('label', null, 'Starts as'), h('div', { class: 'sb-var-dialog-row' }, from, value, useSel)),
+      hint,
+      err,
+    );
+    const p = dialog(current ? `Variable {${current.name}}` : 'New variable', body, [
+      { label: current ? 'Save' : 'Create', value: 'ok', primary: true },
+      { label: 'Cancel', value: 'cancel' },
+    ]);
+    const ok = body.parentElement!.querySelector('.btn.primary') as HTMLButtonElement;
+    const check = () => {
+      let msg = variableNameProblem(name.value, others);
+      if (!msg && from.value === 'cell' && !looksLikeCell(value.value)) msg = 'Type a cell like B2 or Sheet2!B2.';
+      err.textContent = msg ?? '';
+      ok.disabled = !!msg;
+      return !msg;
+    };
+    for (const el of [name, value]) {
+      el.addEventListener('input', check);
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !check()) {
+          e.stopPropagation();
+          e.preventDefault();
+        }
+      });
     }
-    first?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    from.addEventListener('change', () => {
+      shape();
+      check();
+    });
+    shape();
+    setTimeout(() => {
+      name.focus();
+      name.select();
+      check();
+    }, 0);
+    return p.then((r) => {
+      if (r !== 'ok' || !check()) return null;
+      const v = value.value.trim();
+      return { name: name.value.trim(), from: from.value as StepVariable['from'], value: from.value === 'formula' && v === '=' ? '' : v };
+    });
   }
 
   private update(): void {
@@ -202,7 +308,7 @@ export class StepBuilder {
       this.macro.description = desc.value.trim() || undefined;
       this.update();
     });
-    this.listEl.append(desc, this.problemsEl, this.varsEl);
+    this.listEl.append(desc, this.varsEl, this.problemsEl);
     if (!this.macro.steps.length) this.listEl.append(this.examples());
     this.listEl.append(this.stepList(this.macro.steps, []));
     this.renderCode();
@@ -225,6 +331,9 @@ export class StepBuilder {
               class: 'sb-example',
               onclick: () => {
                 this.macro.steps = ex.steps();
+                const vars = this.vars;
+                for (const v of ex.variables?.() ?? []) if (!vars.some((x) => sameVariable(x.name, v.name))) vars.push(v);
+                this.macro.variables = withStepVariables(this.macro.steps, vars);
                 if (!this.macro.description) this.macro.description = ex.description;
                 this.render();
                 this.update();
@@ -244,11 +353,7 @@ export class StepBuilder {
     steps.forEach((step, i) => box.append(this.card(steps, i, scope)));
     const add = h('button', { class: 'btn outline sb-add' }, icon(L.Plus, 14), steps.length ? 'Add step' : 'Add a step') as HTMLButtonElement;
     add.addEventListener('click', () =>
-      this.pickStep(add, (type) => {
-        steps.push(newStep(type));
-        this.render();
-        this.update();
-      }),
+      this.pickStep(add, (type) => void this.addStep(steps, type)),
     );
     box.append(add);
     // Dropping a dragged step here (the innermost list under the pointer wins)
@@ -278,6 +383,20 @@ export class StepBuilder {
       this.update();
     });
     return box;
+  }
+
+  /** Adds a step. One that stores a value uses the first variable, or asks for a new one. */
+  private async addStep(list: Step[], type: string): Promise<void> {
+    const step = newStep(type);
+    const vf = STEP_BY_TYPE.get(type)?.fields.find((f) => f.kind === 'variable');
+    if (vf) {
+      const v = this.vars[0] ?? (await this.createVariable(vf.dflt));
+      if (!v) return;
+      step.args[vf.key] = v.name;
+    }
+    list.push(step);
+    this.render();
+    this.update();
   }
 
   private endDrag(): void {
@@ -430,6 +549,7 @@ export class StepBuilder {
       });
       return sel;
     }
+    if (f.kind === 'variable') return this.variablePicker(f, step, value, set);
     if (f.kind === 'macro') {
       const sel = h('select', { class: 'input sb-field', 'aria-label': f.label }) as HTMLSelectElement;
       const list = this.app.macros.runner.list().filter((m) => m.label !== this.macro.name);
@@ -442,7 +562,7 @@ export class StepBuilder {
     const wide = f.kind === 'text';
     const mono = f.kind === 'range' || f.kind === 'cell' || f.kind === 'column';
     const input = h('input', {
-      class: `input sb-field${mono ? ' mono' : ''}${wide ? ' wide' : ''}${f.kind === 'variable' ? ' var' : ''}`,
+      class: `input sb-field${mono ? ' mono' : ''}${wide ? ' wide' : ''}`,
       value,
       placeholder: f.placeholder ?? f.label,
       'aria-label': f.label,
@@ -451,15 +571,7 @@ export class StepBuilder {
     const fit = () => (input.size = Math.max(f.kind === 'column' ? 3 : 6, Math.min(wide ? 40 : 18, (input.value || f.placeholder || '').length + 1)));
     fit();
     input.addEventListener('input', fit);
-    input.addEventListener('change', () => {
-      set(input.value);
-      // A renamed variable changes the chips and suggestions
-      if (f.kind === 'variable') this.renderVars();
-    });
-    if (f.kind === 'variable') {
-      input.setAttribute('list', 'sb-var-names');
-      return input;
-    }
+    input.addEventListener('change', () => set(input.value));
     if (f.kind === 'column') return input;
     if (f.kind === 'sheet') {
       const listId = 'sb-sheets';
@@ -508,6 +620,32 @@ export class StepBuilder {
     return h('span', { class: 'sb-range' }, input, vars);
   }
 
+  /** A step's variable: one of the macro's variables, or a new one. */
+  private variablePicker(f: StepField, step: Step, value: string, set: (v: string) => void): HTMLSelectElement {
+    const NEW = '\u0001new';
+    const sel = h('select', { class: 'input sb-field var', 'aria-label': f.label }) as HTMLSelectElement;
+    const match = this.vars.find((v) => sameVariable(v.name, value));
+    for (const v of this.vars) sel.append(h('option', { value: v.name }, v.name));
+    if (value && !match) sel.append(h('option', { value }, `${value} (not a variable)`));
+    sel.append(h('option', { value: NEW }, '+ New variable…'));
+    sel.value = match?.name ?? value;
+    let before = sel.value;
+    sel.addEventListener('change', async () => {
+      if (sel.value !== NEW) {
+        before = sel.value;
+        set(sel.value);
+        return;
+      }
+      sel.value = before;
+      const v = await this.createVariable(f.dflt);
+      if (!v) return;
+      step.args[f.key] = v.name;
+      this.render();
+      this.update();
+    });
+    return sel;
+  }
+
   /** The {…} button next to a box: inserts a variable where the cursor is. */
   private varButton(input: HTMLInputElement, scope: Provided[], set: (v: string) => void): HTMLButtonElement {
     const btn = h('button', { class: 'btn sb-pick sb-var-btn', 'aria-label': 'Insert a variable' }, icon(L.Braces, 13)) as HTMLButtonElement;
@@ -520,15 +658,15 @@ export class StepBuilder {
         set(input.value);
       };
       const item = (v: Provided) => h('button', { class: 'sb-var-item', onclick: () => pick(v.name) }, h('code', null, `{${v.name}}`), h('span', null, v.hint));
-      const own = variablesSetIn(this.macro.steps)
-        .filter((n) => !scope.some((v) => v.name.toLowerCase() === n.toLowerCase()))
-        .map((n) => ({ name: n, hint: 'your variable' }));
+      const own = this.vars
+        .filter((x) => !scope.some((v) => sameVariable(v.name, x.name)))
+        .map((x) => ({ name: x.name, hint: describeStart(x) ? `starts as ${describeStart(x)}` : 'your variable' }));
       const menu = h(
         'div',
         { class: 'sb-var-menu' },
         ...(scope.length ? [h('div', { class: 'me-section' }, 'From the blocks around this step'), ...scope.map(item)] : []),
         h('div', { class: 'me-section' }, 'Your variables'),
-        ...(own.length ? own.map(item) : [h('div', { class: 'hint' }, 'None yet. Add a “Set a variable” step to make one.')]),
+        ...(own.length ? own.map(item) : [h('div', { class: 'hint' }, 'None yet. Click “New variable” above the steps to make one.')]),
         h('div', { class: 'me-section' }, 'Always available'),
         ...ALWAYS.map(item),
       );

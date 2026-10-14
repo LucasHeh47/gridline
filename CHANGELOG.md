@@ -22,8 +22,13 @@
   - Optional parameters, error values (`CVErr`), arrays that spill, `Application.Volatile` and `Application.Caller` all work.
   - Like in Excel, these functions can read the whole workbook but not change it. They run only while the workbook's macros are on; until then, their cells show the values saved in the file.
 - `IsError(CVErr(…))` is now True, and a macro writing `CVErr(xlErrNA)` to a cell puts `#N/A` there instead of the number 2042.
-- **Step macros (Beta) can now use variables.** A new **Variables** group of steps:
-  - **Set a variable** to text, a number, a cell (`[B2]`) or a formula with variables in it (`=ROUND({Price}*{Qty}, 2)`);
+- **Step macros (Beta) can now use variables.** Each step macro has a **Variables** list above its steps:
+  - click **New variable** to make as many as you need, each with its own name (no two alike) and a starting value: text, a number, **the value in a cell**, or a formula's result;
+  - click a variable to rename it (the steps using it follow) or change what it starts as; hover it to see the steps that use it;
+  - steps pick a variable from a dropdown, which also has **New variable…**;
+  - use any variable in a box as `{Name}`.
+- A new **Variables** group of steps:
+  - **Set a variable** to a value, the value in a cell, or the result of a formula with variables in it (`=ROUND({Price}*{Qty}, 2)`);
   - **Change a number** (add, subtract, multiply, divide, round, remainder, limit), **Change text** (add to it, replace, uppercase, trim, keep the first or last characters) and **Change a date** (add days, working days, weeks, months or years);
   - **Get a total or count** of cells, the last row with data or the next empty row;
   - **Find a value** and remember its row, its address or the value next to it;

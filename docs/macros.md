@@ -135,13 +135,29 @@ and the code works in Excel too.
 
 ### Variables
 
-A variable keeps a value while the macro runs: a total, a name, a date, a row number. Give it a name
-in a step from the **Variables** group, then use it in any box as `{Name}`, for example
-`Total: {Total}`, `B{Next row}` or `={Price}*2`. The **{ }** button next to a box inserts one for you.
+A variable keeps a value while the macro runs: a total, a name, a date, a row number. Each step
+macro has a **Variables** list above its steps:
+
+1. Click **New variable**.
+2. Give it a name, like `Total` or `Due date`. Names start with a letter and can have letters,
+   numbers, spaces and `_`. Two variables can't have the same name (capitals don't count).
+3. Choose what it **starts as**:
+   - **Text or a number**, like `0` or `Paid`. Leave it empty to start with nothing.
+   - **The value in a cell**, like `B2` or `Settings!B2`. The cell is read when the macro starts;
+     changing the variable later doesn't change the cell.
+   - **A formula's result**, like `=SUM(C2:C100)` or `={Price}*1.07`.
+
+Make as many as you need. Click a variable in the list to rename it (steps that use it are updated)
+or change what it starts as; click its **×** to delete it. Hovering it highlights the steps that
+use it.
+
+Use a variable in any box as `{Name}`, for example `Total: {Total}`, `B{Next row}` or `={Price}*2`.
+The **{ }** button next to a box inserts one for you. Steps that store a value pick the variable from
+a dropdown, which also has **New variable…**.
 
 | Step | What it does |
 | --- | --- |
-| Set a variable | Stores text, a number, a cell's value (`[B2]`) or a formula's result (`=ROUND({Total}*1.07, 2)`). |
+| Set a variable | Sets it to a value, the value in a cell, or a formula's result (`=ROUND({Total}*1.07, 2)`). |
 | Change a number | Adds, subtracts, multiplies, divides, rounds, keeps the remainder, or limits it. A variable that was never set starts at 0. |
 | Change text | Adds text to the end or start, replaces or removes text, changes the case, removes extra spaces, or keeps the first or last characters. |
 | Change a date | Adds or subtracts days, working days, weeks, months or years. |
@@ -150,8 +166,8 @@ in a step from the **Variables** group, then use it in any box as `{Name}`, for 
 | Pick a random number | A whole number between two numbers. |
 | Ask a question | (in Messages & questions) Stores the answer someone types. |
 
-The variables a macro uses are listed above its steps; click one to see which steps use it. If a box
-uses a variable that no step ever sets, usually a typo, a warning appears above the steps.
+If a step uses a name that isn't in the Variables list, usually a typo, a warning appears above the
+steps, with a guess like "Did you mean {Total}?".
 
 A few names are always there: `{Today}` and `{Now}`. Blocks add their own while their steps run:
 

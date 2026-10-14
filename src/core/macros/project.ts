@@ -1,6 +1,6 @@
 // The macros stored in a workbook: VBA modules (kept in the file's vbaProject.bin), plus Gridline's own
 // step macros, shortcuts and automatic triggers (kept in a hidden part of the same file).
-import type { Step } from './steps';
+import type { Step, StepVariable } from './steps';
 
 /** 'form' modules (UserForms) are kept in the file but their designs can't be shown or run. */
 export type ModuleKind = 'standard' | 'document' | 'class' | 'form';
@@ -21,6 +21,8 @@ export interface StepMacro {
   name: string;
   description?: string;
   steps: Step[];
+  /** Its Variables list (missing in macros made before 1.0.5's variables: then any name works). */
+  variables?: StepVariable[];
 }
 
 export interface MacroShortcut {
