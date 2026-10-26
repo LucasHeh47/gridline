@@ -78,7 +78,7 @@
   - smoother hover effects, and menus fade in.
 - The Advanced format card closes (keeping the formatting) when you click elsewhere.
 - Fixed a light outline around right-click menus.
-- **Gridline is part of a family of apps.** The new dotted button at the top left switches to [Pixelline](https://github.com/LucasHeh47/pixelline) (images and pixel art) and [Baseline](https://github.com/LucasHeh47/baseline) (a home for your apps and files), or links to their download page. Baseline can start a blank workbook or any preset in Gridline and reopen your recent workbooks.
+- **Gridline is part of a family of apps.** The new dotted button at the top left switches to [Pixelline](https://github.com/LucasHeh47/pixelline) (images and pixel art), [Frameline](https://github.com/LucasHeh47/frameline) (video editing) and [Baseline](https://github.com/LucasHeh47/baseline) (a home for your apps and files), or links to their download page. Baseline can start a blank workbook or any preset in Gridline and reopen your recent workbooks.
 
 ## 1.0.4
 

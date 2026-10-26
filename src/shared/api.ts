@@ -115,7 +115,7 @@ export interface AiApi {
   localModels(baseUrl: string): Promise<{ ok: boolean; models: string[]; error?: string }>;
 }
 
-export type SuiteAppId = 'baseline' | 'gridline' | 'pixelline';
+export type SuiteAppId = 'baseline' | 'gridline' | 'pixelline' | 'frameline';
 
 export interface SuiteApp {
   id: SuiteAppId;
