@@ -138,7 +138,9 @@ Press **Esc** or click **✕** to go back to your workbook. If the current windo
 A table is a block of data with a header row that you can sort by any column with one click.
 
 1. Click anywhere in your data (or select it) and press **Ctrl+T**. You can also use **Insert → Table** or right-click → **Make a table**.
-2. Gridline works out whether the first row is a header. If it guessed wrong, click **First row is the header** or **No header row** in the message that appears. Without one, a header row (Column1, Column2…) is added above your data.
+2. The first row of your data gives the column names. Nothing in your cells changes: values, formulas, formats, column widths and rows stay as they are. The table only adds an arrow to each column name and a thin outline. (Selecting whole columns, or an empty row or a title above your data, is fine: the table covers just the data and its header row.)
+   - If your data has no header row, the message that appears offers **Add a header row**. It inserts a row named Column1, Column2… above the data. That is the only case where making a table changes your sheet.
+   - Merged cells can't be sorted, so Gridline asks before splitting them.
 3. Each column name gets an arrow. **Click it** to sort smallest first (A to Z, oldest first), **again** for largest first, and **a third time** to put the rows back in their original order.
 4. **Shift+click** another column's arrow to sort by it too, for rows that tie on the first column. The arrows show **1**, **2**… in the order they're used.
 
@@ -158,7 +160,7 @@ The column the table is sorted by is lightly tinted, so you can tell at a glance
 
 **More:**
 - Click **▾** next to an arrow, or press **Alt+↓** on a column name, for the column's menu: sort choices, **Original order**, a filter by values or conditions, and **Table options**.
-- **Table options** sets the table's name, color and banded rows, selects the table, or turns it back into normal cells (the data and formulas stay).
+- **Table options** sets the table's name, an optional color and banded rows, selects the table, or turns it back into normal cells (the data and formulas stay). New tables have no color, so your own formatting shows.
 - When you scroll down a long table, its column names and arrows replace the column letters at the top, so you can sort from anywhere.
 - Formulas can name a table instead of cells: `=SUM(Sales[Amount])` adds up the Amount column however many rows it has, and inside the table `=[@Price]*[@Qty]` uses this row's Price and Qty. Renaming a column or the table updates these formulas.
 - Tables are saved as real Excel tables in `.xlsx` files, including their sort order, filters and colors, and tables in Excel files open as Gridline tables.

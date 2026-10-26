@@ -1,6 +1,7 @@
 // Tables (Ctrl+T): a header row plus rows of data, made for sorting. Compared with Excel's tables:
-//  • Making one is instant: no dialog. Gridline guesses whether the first row is a header (and you
-//    can say otherwise), unmerges cells and turns a sheet filter into the table's own.
+//  • Making one is instant: no dialog, and nothing in the cells changes: values, formats, column
+//    widths and row positions stay as they are. The table adds sort buttons to its first row and
+//    an outline; colors are optional. A sheet filter over the same cells becomes the table's own.
 //  • Sorting is one click on a column's arrow: smallest first, then largest first, then back to
 //    the original order, which Excel can't do once you've sorted. Shift+click adds a second column.
 //  • Sorting understands the data: numbers typed as text ("1,200", "$5") sort as numbers, "Item 2"
@@ -25,6 +26,7 @@ export { tableAt };
 
 /** Colors for the light theme; the grid tints the light ones for dark mode. */
 export const TABLE_COLORS: Record<TableColor, { label: string; header: string; band: string; line: string }> = {
+  none: { label: 'No colors (keep the cells’ look)', header: '', band: '', line: '#8f97a6' },
   blue: { label: 'Blue', header: '#3567c8', band: '#eaf0fb', line: '#a9bfe9' },
   green: { label: 'Green', header: '#2b8a57', band: '#e6f4ec', line: '#9fd0b3' },
   orange: { label: 'Orange', header: '#d9682a', band: '#fcede3', line: '#efb894' },
@@ -62,10 +64,10 @@ export function uniqueTableName(wb: Workbook, base = 'Table'): string {
 
 type ValueAt = (r: number, c: number) => Scalar;
 
-function headerText(v: Scalar): string {
+function headerText(v: Scalar, numFmt?: string): string {
   if (v === null) return '';
   if (v instanceof ErrorValue) return v.code;
-  if (typeof v === 'number') return formatValue(v, undefined, 30).text;
+  if (typeof v === 'number') return formatValue(v, numFmt, 30).text;
   if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
   return v.trim();
 }
@@ -99,7 +101,7 @@ function valueAtFn(doc: Doc, sheet: Sheet): ValueAt {
   };
 }
 
-/** Makes the header cells hold the column names as text (header cells can't hold formulas or numbers). */
+/** Puts the column names in a header row that was added for them. */
 function writeHeaders(tx: Transaction, sheet: Sheet, range: Range, names: string[]): void {
   names.forEach((name, i) => {
     const c = range.c1 + i;
@@ -160,17 +162,54 @@ export function tableById(sheet: Sheet, id: string): TableDef | undefined {
 
 export interface MadeTable {
   table: TableDef;
-  /** A header row was added above the data. */
+  /** A header row was added above the data (only when asked for with `header: false`). */
   addedHeader: boolean;
-  /** Merged cells that had to be split. */
-  unmerged: number;
+  /** The first row gives the column names, but it looks like data (numbers, repeats, blanks). */
+  firstRowLooksLikeData: boolean;
+}
+
+/** The cells include merged cells, which can't be sorted. Nothing was changed. */
+export class MergedCellsError extends Error {
+  constructor(readonly merges: Range[]) {
+    super(`Tables can't contain merged cells (${merges.map((m) => formatCell(m.r1, m.c1) + ':' + formatCell(m.r2, m.c2)).join(', ')}), because sorting moves rows apart.`);
+  }
+}
+
+/** Blank rows and columns at the edges of a block are left out (a whole-column selection, an empty row above). */
+function trimBlankEdges(sheet: Sheet, r: Range): Range {
+  const filled = (r1: number, c1: number, r2: number, c2: number) => {
+    for (let row = r1; row <= r2; row++) for (let c = c1; c <= c2; c++) if (hasContent(sheet.getCell(row, c))) return true;
+    return false;
+  };
+  let { r1, c1, r2, c2 } = r;
+  while (r1 < r2 && !filled(r1, c1, r1, c2)) r1++;
+  while (r2 > r1 && !filled(r2, c1, r2, c2)) r2--;
+  while (c1 < c2 && !filled(r1, c1, r2, c1)) c1++;
+  while (c2 > c1 && !filled(r1, c2, r2, c2)) c2--;
+  return { r1, c1, r2, c2 };
+}
+
+/** A title above the header row (a cell or two, with a full row of names under it) stays out of the table. */
+function skipTitleRow(doc: Doc, sheet: Sheet, r: Range): Range {
+  if (r.c2 === r.c1 || r.r2 - r.r1 < 2) return r;
+  const count = (row: number) => {
+    let n = 0;
+    for (let c = r.c1; c <= r.c2; c++) if (hasContent(sheet.getCell(row, c))) n++;
+    return n;
+  };
+  const top = count(r.r1);
+  const next = count(r.r1 + 1);
+  if (top < next && top <= Math.ceil((r.c2 - r.c1 + 1) / 2) && looksLikeHeaderRow(doc, sheet, { ...r, r1: r.r1 + 1 })) return { ...r, r1: r.r1 + 1 };
+  return r;
 }
 
 /**
- * Makes a table from a block of cells. Without a header row (`header: false`), one is added above
- * the data with names Column1, Column2…
+ * Makes a table from a block of cells. The cells don't change: the first row gives the column
+ * names (Column2 for an empty one, Amount2 for a repeat; the names live in the table, not the
+ * cells). Only with `header: false` is a header row added above the data, named Column1, Column2…
+ * Merged cells throw a MergedCellsError unless `unmerge` is set.
  */
-export function createTable(tx: Transaction, doc: Doc, sheet: Sheet, range: Range, opts: { header?: boolean; name?: string; color?: TableColor } = {}): MadeTable {
+export function createTable(tx: Transaction, doc: Doc, sheet: Sheet, range: Range, opts: { header?: boolean; name?: string; color?: TableColor; unmerge?: boolean } = {}): MadeTable {
   let r = normalize(range);
   // Whole columns or rows: just the part with data
   if (r.r2 === MAX_ROWS - 1 || r.c2 === MAX_COLS - 1) {
@@ -178,39 +217,49 @@ export function createTable(tx: Transaction, doc: Doc, sheet: Sheet, range: Rang
     if (r.r2 === MAX_ROWS - 1) r = { ...r, r2: Math.max(r.r1, b.maxRow) };
     if (r.c2 === MAX_COLS - 1) r = { ...r, c2: Math.max(r.c1, b.maxCol) };
   }
+  r = trimBlankEdges(sheet, r);
+  if (r.r1 === r.r2 && r.c1 === r.c2 && !hasContent(sheet.getCell(r.r1, r.c1))) throw new Error('There’s no data here. Click inside your data (or select it), then press Ctrl+T.');
+  if (opts.header === undefined) r = skipTitleRow(doc, sheet, r);
   if (r.c2 - r.c1 >= 1000) throw new Error('A table can have at most 1,000 columns.');
   const clash = sheet.tables.find((t) => rangesIntersect(t.range, r));
   if (clash) throw new Error(`That overlaps the table ${clash.name}. A cell can only be in one table.`);
-  const header = opts.header ?? looksLikeHeaderRow(doc, sheet, r);
 
-  // Tables can't have merged cells
+  // Tables can't have merged cells: they're only split when asked to
   const merged = sheet.merges.filter((m) => rangesIntersect(m, r));
-  if (merged.length) tx.setProp(sheet, 'merges', sheet.merges.filter((m) => !merged.includes(m)), true);
+  if (merged.length) {
+    if (!opts.unmerge) throw new MergedCellsError(merged);
+    tx.setProp(sheet, 'merges', sheet.merges.filter((m) => !merged.includes(m)), true);
+  }
   // A sheet filter over the same cells becomes the table's filter
   let filter: Record<number, FilterCond> = {};
   if (sheet.filter && rangesIntersect(sheet.filter.range, r)) {
     filter = { ...sheet.filter.conds };
     tx.setProp(sheet, 'filter', null);
   }
-  if (!header) {
+  const addedHeader = opts.header === false;
+  if (addedHeader) {
     restructure(tx, doc.wb, sheet, 'row', r.r1, 1);
     r = { ...r, r2: r.r2 + 1 };
     for (const k of Object.keys(filter)) if (+k < r.c1 || +k > r.c2) delete filter[+k];
   }
-  // A header alone gets one empty row to type into
+  // A header alone gets the empty row under it to type into
   if (r.r2 === r.r1) r = { ...r, r2: r.r1 + 1 };
-  const valueAt = valueAtFn(doc, sheet);
-  const texts: string[] = [];
-  for (let c = r.c1; c <= r.c2; c++) texts.push(header ? headerText(valueAt(r.r1, c)) : '');
-  const names = columnNames(texts);
-  writeHeaders(tx, sheet, r, names);
+  const names = columnNames(addedHeader ? Array.from({ length: r.c2 - r.c1 + 1 }, () => '') : headerTexts(doc, sheet, r));
+  if (addedHeader) writeHeaders(tx, sheet, r, names);
   const name = opts.name && !tableNameProblem(opts.name, doc.wb) ? opts.name.trim() : uniqueTableName(doc.wb);
-  const used = new Set(doc.wb.sheets.flatMap((s) => s.tables.map((t) => t.color)));
-  const color = opts.color ?? TABLE_COLOR_IDS.find((c) => !used.has(c)) ?? 'blue';
-  const table: TableDef = { id: 't' + Math.random().toString(36).slice(2, 10), name, range: r, columns: names, color, banded: true, sort: [], filter };
+  const color = opts.color ?? 'none';
+  const table: TableDef = { id: 't' + Math.random().toString(36).slice(2, 10), name, range: r, columns: names, color, banded: color !== 'none', sort: [], filter };
   tx.setProp(sheet, 'tables', [...sheet.tables, table], true);
   if (Object.keys(filter).length) refreshFilters(tx, doc, sheet);
-  return { table, addedHeader: !header, unmerged: merged.length };
+  return { table, addedHeader, firstRowLooksLikeData: !addedHeader && r.r2 > r.r1 && !looksLikeHeaderRow(doc, sheet, r) };
+}
+
+/** What the header cells show (their formatted values), for the column names. */
+function headerTexts(doc: Doc, sheet: Sheet, r: Range): string[] {
+  const valueAt = valueAtFn(doc, sheet);
+  const texts: string[] = [];
+  for (let c = r.c1; c <= r.c2; c++) texts.push(headerText(valueAt(r.r1, c), doc.wb.styles.get(sheet.styleIdAt(r.r1, c)).numFmt));
+  return texts;
 }
 
 /** Turns a table back into ordinary cells (the data stays; the colors and buttons go). */
@@ -414,7 +463,7 @@ export function sortLabel(kind: 'number' | 'date' | 'text', desc: boolean): stri
 
 /**
  * After an edit: tables grow over rows typed just below them and columns typed just right of them,
- * and header cells keep unique names (renaming one updates the formulas that use it).
+ * and their column names follow the header cells (renaming one updates the formulas that use it).
  */
 export function afterEdit(tx: Transaction, doc: Doc): void {
   if (!doc.wb.hasTables) return;
@@ -470,14 +519,11 @@ function updateTable(tx: Transaction, doc: Doc, sheet: Sheet, t: TableDef, chang
     next = { ...next, range };
     r2 = bottom;
   }
-  // Header names (new columns get Column4…; typed names are kept unique)
+  // Column names follow the header cells (an empty one is Column4, a repeat gets a number). The
+  // names live in the table: the cells keep exactly what was typed.
   const headerEdited = changes.some((ch) => ch.r === r1 && ch.c >= c1 && ch.c <= next.range.c2);
   if (headerEdited || right > c2) {
-    const valueAt = valueAtFn(doc, sheet);
-    const texts: string[] = [];
-    for (let c = c1; c <= next.range.c2; c++) texts.push(headerText(valueAt(r1, c)));
-    const names = columnNames(texts);
-    writeHeaders(tx, sheet, next.range, names);
+    const names = columnNames(headerTexts(doc, sheet, next.range));
     names.forEach((name, i) => {
       const old = t.columns[i];
       if (old !== undefined && old !== name) renameColumnRefs(tx, doc.wb, next, old, name);

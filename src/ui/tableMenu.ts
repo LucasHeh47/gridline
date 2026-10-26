@@ -3,11 +3,11 @@
 import * as L from 'lucide';
 import { formatRange } from '../core/address';
 import { currentRegion } from '../core/ops/data';
-import { setColumnWidth } from '../core/ops/structure';
 import {
   canRestoreOrder,
   columnKind,
   createTable,
+  MergedCellsError,
   nextSort,
   removeTable,
   renameTable,
@@ -36,7 +36,7 @@ export function activeTable(app: App): TableDef | undefined {
 }
 
 /** Ctrl+T: makes the selected cells (or the block of data around the cursor) a table. */
-export function makeTable(app: App, opts: { header?: boolean } = {}): void {
+export function makeTable(app: App, opts: { header?: boolean; unmerge?: boolean } = {}): void {
   const s = app.sheet;
   const inside = activeTable(app);
   if (inside && app.sel.isSingleCell) {
@@ -50,34 +50,41 @@ export function makeTable(app: App, opts: { header?: boolean } = {}): void {
     return;
   }
   let made: MadeTable | null = null;
-  app.transact('Make a table', (tx) => {
-    made = createTable(tx, app.doc, s, range, opts);
-    // Room for each column's name next to its buttons
-    const t = made.table;
-    t.columns.forEach((name, i) => {
-      const c = t.range.c1 + i;
-      const need = Math.min(320, app.grid.tableHeaderWidth(name));
-      if (need > s.colWidth(c)) setColumnWidth(tx, s, [c], need);
+  try {
+    // Nothing in the cells changes: values, formats, column widths and rows stay as they are
+    app.doc.transact('Make a table', (tx) => {
+      made = createTable(tx, app.doc, s, range, opts);
     });
-  });
+  } catch (err) {
+    if (err instanceof MergedCellsError) toast(`${err.message} Unmerge them to make a table.`, { kind: 'error', ms: 10000, action: { label: 'Unmerge and make the table', run: () => makeTable(app, { ...opts, unmerge: true }) } });
+    else toast((err as Error).message || String(err), { kind: 'error' });
+    return;
+  }
   if (!made) return;
-  const { table, addedHeader, unmerged } = made as MadeTable;
+  const { table, addedHeader, firstRowLooksLikeData } = made as MadeTable;
   app.sel.setRange(table.range, { row: table.range.r1, col: table.range.c1 });
   app.onSelectionChanged();
   const rows = table.range.r2 - table.range.r1;
-  const notes = [addedHeader ? 'Added a header row.' : '', unmerged ? 'Merged cells were split.' : ''].filter(Boolean).join(' ');
-  toast(`Made ${table.name} with ${rows.toLocaleString()} row${rows === 1 ? '' : 's'}. Click a column’s arrow to sort it.${notes ? ' ' + notes : ''}`, {
+  const first = `row ${table.range.r1 + 1}`;
+  const message = addedHeader
+    ? `Made ${table.name} with a new header row and ${rows.toLocaleString()} row${rows === 1 ? '' : 's'}.`
+    : firstRowLooksLikeData
+      ? `Made ${table.name}. Its column names come from ${first}, which looks like data: sorting keeps that row at the top.`
+      : `Made ${table.name} with ${rows.toLocaleString()} row${rows === 1 ? '' : 's'}. Click a column’s arrow to sort it.`;
+  toast(message, {
     kind: 'success',
-    ms: 8000,
-    // The header guess can be wrong; fix it in one click
-    action: {
-      label: addedHeader ? 'First row is the header' : 'No header row',
-      run: () => {
-        app.doc.undo();
-        app.sel.setRange(range, { row: range.r1, col: range.c1 });
-        makeTable(app, { header: addedHeader });
-      },
-    },
+    ms: firstRowLooksLikeData ? 12000 : 8000,
+    // Data without a header row: add one above it (the only time making a table changes the sheet)
+    action: firstRowLooksLikeData
+      ? {
+          label: 'Add a header row',
+          run: () => {
+            app.doc.undo();
+            app.sel.setRange(range, { row: range.r1, col: range.c1 });
+            makeTable(app, { ...opts, header: false });
+          },
+        }
+      : undefined,
   });
 }
 
@@ -209,21 +216,25 @@ export function openTableOptions(app: App, table: TableDef, at: DOMRect | HTMLEl
     { class: 'tm-swatches' },
     ...TABLE_COLOR_IDS.map((c) => {
       const b = h('button', {
-        class: `tm-swatch${table.color === c ? ' on' : ''}`,
-        style: { background: TABLE_COLORS[c].header },
+        class: `tm-swatch${c === 'none' ? ' none' : ''}${table.color === c ? ' on' : ''}`,
+        style: c === 'none' ? undefined : { background: TABLE_COLORS[c].header },
         'aria-label': TABLE_COLORS[c].label,
         onclick: () => {
           const t = current();
           if (!t) return;
-          app.transact('Table color', (tx) => setTableLook(tx, s, t, { color: c }));
+          // Picking a color for a plain table turns on banded rows too
+          const band = t.color === 'none' && c !== 'none' ? { banded: true } : {};
+          app.transact('Table color', (tx) => setTableLook(tx, s, t, { color: c, ...band }));
           swatches.querySelectorAll('.tm-swatch').forEach((el) => el.classList.toggle('on', el === b));
+          banded.checked = current()?.banded ?? banded.checked;
+          banded.disabled = c === 'none';
         },
       });
       tooltip(b, TABLE_COLORS[c].label);
       return b;
     }),
   );
-  const banded = h('input', { type: 'checkbox', checked: table.banded }) as HTMLInputElement;
+  const banded = h('input', { type: 'checkbox', checked: table.banded, disabled: table.color === 'none' }) as HTMLInputElement;
   banded.addEventListener('change', () => {
     const t = current();
     if (t) app.transact(banded.checked ? 'Banded rows' : 'No banded rows', (tx) => setTableLook(tx, s, t, { banded: banded.checked }));

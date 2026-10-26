@@ -9,6 +9,7 @@ import {
   canRestoreOrder,
   columnKind,
   createTable,
+  MergedCellsError,
   nextSort,
   removeTable,
   renameTable,
@@ -24,7 +25,7 @@ import { makeDoc, set, val } from './helpers';
 
 const R = (a: string) => parseRange(a)!;
 
-function make(doc: Doc, range: string, opts: { header?: boolean } = {}): TableDef {
+function make(doc: Doc, range: string, opts: Parameters<typeof createTable>[4] = {}): TableDef {
   let t: TableDef | undefined;
   doc.transact('table', (tx) => (t = createTable(tx, doc, doc.wb.activeSheet, R(range), opts).table));
   return t!;
@@ -55,13 +56,13 @@ function sample(): Doc {
 }
 
 describe('making tables', () => {
-  it('finds the header row and keeps names unique, like Excel', () => {
+  it('names columns from the first row and keeps the names unique, without changing the cells', () => {
     const doc = makeDoc({ A1: 'Name', B1: 'Name', C1: '', A2: 'Ann', B2: 'Bo', C2: 'x' });
-    // Duplicate and empty headers: not a header row, so one is added
+    // A repeat gets a number and an empty header becomes Column3, in the table only
     const t = make(doc, 'A1:C2');
-    expect(t.range).toEqual(R('A1:C3'));
-    expect(t.columns).toEqual(['Column1', 'Column2', 'Column3']);
-    expect(val(doc, 'A2')).toBe('Name');
+    expect(t.range).toEqual(R('A1:C2'));
+    expect(t.columns).toEqual(['Name', 'Name2', 'Column3']);
+    expect([val(doc, 'A1'), val(doc, 'B1'), val(doc, 'C1'), val(doc, 'A2')]).toEqual(['Name', 'Name', null, 'Ann']);
 
     const doc2 = makeDoc({ A1: 'Name', B1: 'City', A2: 'Ann', B2: 'Oslo', A3: 'Bo', B3: 'Rome' });
     const t2 = make(doc2, 'A1:B3');
@@ -69,11 +70,38 @@ describe('making tables', () => {
     expect(t2.columns).toEqual(['Name', 'City']);
     expect(t2.name).toBe('Table1');
 
-    // Forcing a header: an empty one becomes Column2, a repeat gets a number
     const doc3 = makeDoc({ A1: 'Amount', B1: '', C1: 'amount', A2: '1' });
     const t3 = make(doc3, 'A1:C2', { header: true });
     expect(t3.columns).toEqual(['Amount', 'Column2', 'amount2']);
-    expect([val(doc3, 'B1'), val(doc3, 'C1')]).toEqual(['Column2', 'amount2']);
+    expect([val(doc3, 'B1'), val(doc3, 'C1')]).toEqual([null, 'amount']);
+  });
+
+  it('keeps every cell as it was: values, formulas, formats, column widths and rows', () => {
+    const doc = makeDoc({ B2: '2024', C2: '=B2+1', D2: 'Total', B3: '5', C3: '6', D3: '=B3+C3', B4: '7', C4: '8', D4: '=B4+C4', F1: 'beside' });
+    const sh = doc.wb.activeSheet;
+    doc.transact('look', (tx) => tx.patchCell(sh, 1, 1, { s: doc.wb.styles.intern({ bold: true, fill: '#ffcc00', numFmt: '0' }) }));
+    sh.colWidths.set(1, 140);
+    const before = [...sh.cells.entries()].map(([k, c]) => JSON.stringify([k, c.v, c.f, c.s]));
+    const widths = [0, 1, 2, 3, 4].map((c) => sh.colWidth(c));
+    // Whole columns A:E, with an empty row above the data and an empty column A
+    let made: ReturnType<typeof createTable> | undefined;
+    doc.transact('table', (tx) => (made = createTable(tx, doc, sh, R('A1:E1048576'))));
+    expect(made!.table.range).toEqual(R('B2:D4'));
+    expect(made!.table.columns).toEqual(['2024', '2025', 'Total']);
+    expect(made!.addedHeader).toBe(false);
+    expect(made!.firstRowLooksLikeData).toBe(true);
+    expect([...sh.cells.entries()].map(([k, c]) => JSON.stringify([k, c.v, c.f, c.s]))).toEqual(before);
+    expect([0, 1, 2, 3, 4].map((c) => sh.colWidth(c))).toEqual(widths);
+    expect(made!.table.color).toBe('none');
+    expect(made!.table.banded).toBe(false);
+  });
+
+  it('leaves a title above the header row out of the table', () => {
+    const doc = makeDoc({ A1: 'Scores', A2: 'Name', B2: 'Team', C2: 'Points', A3: 'Ann', B3: 'Red', C3: '12', A4: 'Bo', B4: 'Blue', C4: '7' });
+    const t = make(doc, 'A1:C4');
+    expect(t.range).toEqual(R('A2:C4'));
+    expect(t.columns).toEqual(['Name', 'Team', 'Points']);
+    expect(val(doc, 'A1')).toBe('Scores');
   });
 
   it('adds a header row when the data has none, and an empty row under a lone header', () => {
@@ -97,13 +125,15 @@ describe('making tables', () => {
     expect(doc.wb.activeSheet.tables).toEqual([]);
   });
 
-  it('turns a sheet filter into the table’s own, and splits merged cells', () => {
+  it('turns a sheet filter into the table’s own, and splits merged cells only when asked', () => {
     const doc = sample();
     doc.transact('merge', (tx) => tx.setProp(doc.wb.activeSheet, 'merges', [R('A4:B4')]));
     doc.transact('filter', (tx) => tx.setProp(doc.wb.activeSheet, 'filter', { range: R('A1:C5'), conds: { 0: { values: ['Apple'] } } }));
-    let unmerged = 0;
-    doc.transact('table', (tx) => (unmerged = createTable(tx, doc, doc.wb.activeSheet, R('A1:C5')).unmerged));
-    expect(unmerged).toBe(1);
+    expect(() => make(doc, 'A1:C5')).toThrow(MergedCellsError);
+    expect(doc.wb.activeSheet.merges).toHaveLength(1);
+    expect(doc.wb.activeSheet.tables).toEqual([]);
+    make(doc, 'A1:C5', { unmerge: true });
+    expect(doc.wb.activeSheet.merges).toHaveLength(0);
     expect(doc.wb.activeSheet.filter).toBeNull();
     expect(table(doc).filter).toEqual({ 0: { values: ['Apple'] } });
     expect([...doc.wb.activeSheet.filterHidden].sort()).toEqual([1, 2, 3]);
@@ -217,7 +247,8 @@ describe('tables grow as you type', () => {
     make(doc, 'A1:A3');
     set(doc, { B2: 'x' });
     expect(table(doc).range).toEqual(R('A1:B3'));
-    expect(val(doc, 'B1')).toBe('Column2');
+    expect(table(doc).columns).toEqual(['Name', 'Column2']);
+    expect(val(doc, 'B1')).toBeNull();
     set(doc, { C1: 'Notes' });
     expect(table(doc).columns).toEqual(['Name', 'Column2', 'Notes']);
   });
@@ -251,8 +282,9 @@ describe('structured references', () => {
       D2: '=[@[Unit Price]]*[@Qty]',
       D3: '=[@[Unit Price]]*[@Qty]',
     });
-    // D became part of the table (typed just right of it), so #All has 3 rows of 4
-    expect([val(doc, 'F1'), val(doc, 'F2'), val(doc, 'F3'), val(doc, 'F4'), val(doc, 'F5')]).toEqual([13, 2, 12, 'Qty', 20]);
+    // D became part of the table (typed just right of it), so #All has 3 rows of 4; its header cell
+    // stays empty (the name Column4 lives in the table), so COUNTA finds 11
+    expect([val(doc, 'F1'), val(doc, 'F2'), val(doc, 'F3'), val(doc, 'F4'), val(doc, 'F5')]).toEqual([13, 2, 11, 'Qty', 20]);
     expect(table(doc).columns).toEqual(['Item', 'Unit Price', 'Qty', 'Column4']);
     expect([val(doc, 'D2'), val(doc, 'D3')]).toEqual([20, 15]);
     // A new row: the totals follow, and the calculated column fills in
@@ -357,7 +389,7 @@ describe('tables in .xlsx files', () => {
 
   it('reads Excel’s styles, totals rows and table names', async () => {
     const doc = makeDoc({ A1: 'N', A2: '1', A3: '2', A4: '=SUBTOTAL(109,A2:A3)' });
-    make(doc, 'A1:A4', { header: true });
+    make(doc, 'A1:A4', { header: true, color: 'blue' });
     const data = await writeXlsx(doc);
     const zip = await JSZip.loadAsync(data);
     const xml = (await zip.file('xl/tables/table1.xml')!.async('string')).replace('ref="A1:A4"', 'ref="A1:A4" totalsRowCount="1"').replace(/TableStyleMedium\d+/, 'TableStyleLight10');
