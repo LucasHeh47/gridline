@@ -45,6 +45,10 @@ export interface GridlineApi {
   onRequestClose(cb: () => void): void;
   /** Files opened from outside (Explorer, a second launch) for this window to open in tabs. */
   onOpenPaths(cb: (paths: string[]) => void): void;
+  /** A blank workbook or a preset asked for from outside (Baseline). */
+  onStart(cb: (start: { template?: string; blank?: boolean }) => void): void;
+  /** The other apps of the suite (Baseline, Pixelline). */
+  suite: SuiteApi;
   toggleDevTools(): void;
   appVersion(): Promise<string>;
   /** Downloads live data through the desktop shell (allow-listed sites, cached on disk). */
@@ -109,6 +113,24 @@ export interface AiApi {
   hasKey(): Promise<boolean>;
   /** Models offered by a local server. */
   localModels(baseUrl: string): Promise<{ ok: boolean; models: string[]; error?: string }>;
+}
+
+export type SuiteAppId = 'baseline' | 'gridline' | 'pixelline';
+
+export interface SuiteApp {
+  id: SuiteAppId;
+  name: string;
+  description: string;
+  installed: boolean;
+  exe: string | null;
+  version: string | null;
+  download: string;
+}
+
+export interface SuiteApi {
+  apps(): Promise<SuiteApp[]>;
+  /** Starts an app, optionally with files to open or options like "--new=16x16". */
+  launch(id: SuiteAppId, args?: string[]): Promise<boolean>;
 }
 
 export interface UpdateCheckOptions {

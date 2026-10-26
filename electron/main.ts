@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { setupAi } from './ai';
+import { launchSuiteApp, registerSelf, safeLaunchArgs, suiteApps, type SuiteAppId } from './suite';
 import { setupUpdates } from './updater';
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
@@ -63,6 +64,13 @@ async function addRecent(p: string): Promise<void> {
 }
 
 // ---------- windows ----------
+
+/** What Baseline (or a shortcut) asked for: a blank workbook (--new) or a preset (--template=budget). */
+function startFromArgv(argv: string[]): { template?: string; blank?: boolean } {
+  const t = argv.find((a) => a.startsWith('--template='))?.slice('--template='.length);
+  if (t && /^[a-z-]{1,32}$/.test(t)) return { template: t };
+  return argv.includes('--new') ? { blank: true } : {};
+}
 
 function filesFromArgv(argv: string[]): string[] {
   return argv.slice(1).filter((a) => !a.startsWith('-') && SUPPORTED.test(a) && existsSync(a));
@@ -358,6 +366,13 @@ ipcMain.handle('net:cache-size', async () => {
   return total;
 });
 
+// The other apps of the suite (Baseline, Pixelline)
+ipcMain.handle('suite:apps', () => suiteApps());
+ipcMain.handle('suite:launch', async (_e, id: SuiteAppId, args: unknown) => {
+  if (!['baseline', 'gridline', 'pixelline'].includes(id)) return false;
+  return launchSuiteApp(id, safeLaunchArgs(args));
+});
+
 setupUpdates();
 setupAi(DEV_URL);
 
@@ -390,6 +405,8 @@ if (!app.requestSingleInstanceLock()) {
     if (win.isMinimized()) win.restore();
     win.focus();
     if (files.length) sendPaths(win, files);
+    const start = startFromArgv(argv);
+    if (start.template || start.blank) win.webContents.send('app:start', start);
   });
 
   app.whenReady().then(() => {
@@ -397,9 +414,13 @@ if (!app.requestSingleInstanceLock()) {
     app.setAppUserModelId('com.gridline.app');
     const files = filesFromArgv(process.argv);
     if (process.env.GRIDLINE_OPEN && existsSync(process.env.GRIDLINE_OPEN)) files.push(process.env.GRIDLINE_OPEN);
-    const startTemplate = process.env.GRIDLINE_TEMPLATE;
+    const start = startFromArgv(process.argv);
+    const envTemplate = process.env.GRIDLINE_TEMPLATE;
+    const startTemplate = start.template ?? (envTemplate && /^[a-z-]{1,32}$/.test(envTemplate) ? envTemplate : undefined);
     if (files.length) openInNewWindow(files);
-    else createWindow(undefined, startTemplate && /^[a-z-]{1,32}$/.test(startTemplate) ? startTemplate : undefined, true);
+    // A blank workbook asked for (--new) skips the start page
+    else createWindow(undefined, startTemplate, !start.blank);
+    void registerSelf('gridline');
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });

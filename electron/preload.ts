@@ -34,6 +34,13 @@ const api: GridlineApi = {
   onOpenPaths: (cb) => {
     ipcRenderer.on('app:open-paths', (_e, paths: string[]) => cb(Array.isArray(paths) ? paths.filter((p) => typeof p === 'string') : []));
   },
+  onStart: (cb) => {
+    ipcRenderer.on('app:start', (_e, start: { template?: string; blank?: boolean }) => cb(start && typeof start === 'object' ? start : {}));
+  },
+  suite: {
+    apps: () => ipcRenderer.invoke('suite:apps'),
+    launch: (id, args) => ipcRenderer.invoke('suite:launch', id, args ?? []),
+  },
   toggleDevTools: () => ipcRenderer.send('win:devtools'),
   appVersion: () => ipcRenderer.invoke('app:version'),
   fetchData: (url, opts) => ipcRenderer.invoke('net:fetch', url, opts),

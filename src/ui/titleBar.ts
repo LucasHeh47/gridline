@@ -3,6 +3,7 @@ import * as L from 'lucide';
 import type { App } from './app';
 import { h, icon, kbd } from './dom';
 import { openPalette } from './palette';
+import { suiteButton } from './suiteMenu';
 import { isDesktop, platform } from './platform';
 import { showMenu, tooltip, type MenuItem } from './widgets';
 
@@ -43,6 +44,7 @@ export class TitleBar {
     tooltip(help, 'Keyboard shortcuts', 'Ctrl+/');
     this.el.innerHTML = '';
     const parts: (HTMLElement | null)[] = [
+      suiteButton(),
       brand,
       quick,
       app.bookStrip.el,
