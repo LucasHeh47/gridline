@@ -61,7 +61,7 @@ export interface GridlineApi {
   updates: UpdatesApi;
 }
 
-export type SuiteAppId = 'baseline' | 'gridline' | 'pixelline';
+export type SuiteAppId = 'baseline' | 'gridline' | 'pixelline' | 'frameline';
 
 export interface SuiteApp {
   id: SuiteAppId;

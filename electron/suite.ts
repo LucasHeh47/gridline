@@ -1,13 +1,13 @@
-// The suite: Baseline (home), Gridline (spreadsheets) and Pixelline (images). Each app notes where
-// it runs from in a small shared file, so the others can find and start it, installed or portable.
-// (This file is the same in all three apps.)
+// The suite: Baseline (home), Gridline (spreadsheets), Pixelline (images) and Frameline (video). Each
+// app notes where it runs from in a small shared file, so the others can find and start it, installed
+// or portable. (This file is the same in all four apps.)
 import { app } from 'electron';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export type SuiteAppId = 'baseline' | 'gridline' | 'pixelline';
+export type SuiteAppId = 'baseline' | 'gridline' | 'pixelline' | 'frameline';
 
 export interface SuiteAppInfo {
   id: SuiteAppId;
@@ -24,6 +24,7 @@ export const SUITE: { id: SuiteAppId; name: string; description: string; repo: s
   { id: 'baseline', name: 'Baseline', description: 'Home for your apps and files', repo: 'LucasHeh47/baseline' },
   { id: 'gridline', name: 'Gridline', description: 'Spreadsheets', repo: 'LucasHeh47/gridline' },
   { id: 'pixelline', name: 'Pixelline', description: 'Images and pixel art', repo: 'LucasHeh47/pixelline' },
+  { id: 'frameline', name: 'Frameline', description: 'Video editing', repo: 'LucasHeh47/frameline' },
 ];
 
 interface Entry {
@@ -32,7 +33,7 @@ interface Entry {
   seen: number;
 }
 
-/** Shared by the three apps; it lives with Baseline's settings. */
+/** Shared by the apps; it lives with Baseline's settings. */
 export const suiteFile = () => path.join(app.getPath('appData'), 'Baseline', 'suite.json');
 
 async function readSuite(): Promise<Record<string, Entry>> {
@@ -76,10 +77,10 @@ export async function suiteApps(extra: Partial<Record<SuiteAppId, string>> = {})
   });
 }
 
-/** Arguments one app may pass when starting another: files, and options like --new=16x16. */
+/** Arguments one app may pass when starting another: files, and options like --new=16x16 or --fps=24. */
 export function safeLaunchArgs(args: unknown): string[] {
   if (!Array.isArray(args)) return [];
-  return args.filter((a): a is string => typeof a === 'string' && a.length < 400 && (/^--(new|template|bg|name)(=[^"\r\n]{0,120})?$/.test(a) || (path.isAbsolute(a) && existsSync(a))));
+  return args.filter((a): a is string => typeof a === 'string' && a.length < 400 && (/^--(new|template|bg|name|fps)(=[^"\r\n]{0,120})?$/.test(a) || (path.isAbsolute(a) && existsSync(a))));
 }
 
 /** Starts another app of the suite. Returns false when it isn't installed. */
