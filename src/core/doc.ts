@@ -3,6 +3,7 @@ import { external } from './data/external';
 import { Engine } from './formula/engine';
 import type { UserFunction } from './formula/types';
 import { History, Transaction } from './history';
+import { afterEdit } from './tables';
 import { Workbook, type Sheet } from './workbook';
 
 export type DocEvent =
@@ -144,6 +145,8 @@ export class Doc {
     tx.selectionBefore = this.selectionProvider?.() ?? undefined;
     try {
       fn(tx);
+      // Tables grow over rows typed below them, and keep their header names unique
+      afterEdit(tx, this);
     } catch (e) {
       // Roll back partial changes so the document stays consistent
       tx.replay(false);

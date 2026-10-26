@@ -33,9 +33,10 @@ import { showContextMenu } from './contextMenu';
 import { debounce, h } from './dom';
 import { EditController, type Move } from './editor';
 import { FilterMenu } from './filterMenu';
+import { activeTable, openTableMenu, tableButtonClick, tableButtonTip } from './tableMenu';
 import { FindBar } from './findBar';
 import { FormulaBar } from './formulaBar';
-import { GridView } from './grid/GridView';
+import { GridView, type TableButtonHit } from './grid/GridView';
 import { clearColorCaches } from './grid/theme';
 import { SidePanel } from './panels/SidePanel';
 import { isDesktop, platform } from './platform';
@@ -910,10 +911,18 @@ export class App {
 
   private onGridKey(e: KeyboardEvent): void {
     if (e.isComposing) return;
-    // Alt+Down opens a cell's dropdown list (data validation)
-    if (e.altKey && e.key === 'ArrowDown' && !e.ctrlKey && this.validation.openList()) {
-      e.preventDefault();
-      return;
+    // Alt+Down opens a cell's dropdown list (data validation), or a table column's menu in its header
+    if (e.altKey && e.key === 'ArrowDown' && !e.ctrlKey) {
+      const t = activeTable(this);
+      if (t && this.sel.active.row === t.range.r1) {
+        e.preventDefault();
+        openTableMenu(this, t, this.sel.active.col, this.grid.screenRect(this.grid.cellRect(t.range.r1, this.sel.active.col)));
+        return;
+      }
+      if (this.validation.openList()) {
+        e.preventDefault();
+        return;
+      }
     }
     if (this.macros.handleKey(e)) {
       e.preventDefault();
@@ -1248,7 +1257,12 @@ export class App {
   }
 
   hoverCell(x: number, y: number, e: MouseEvent): void {
-    const hit = this.grid.hitTest(x, y);
+    const found = this.grid.hitTest(x, y);
+    // A table's buttons in the column header (when its header row has scrolled away) explain themselves too
+    const hit =
+      found.kind === 'colHeader' && found.tableButton
+        ? { kind: 'cell' as const, row: found.tableButton.table.range.r1, col: found.col, fillHandle: false, filterButton: false, tableButton: found.tableButton, sticky: true }
+        : found;
     if (hit.kind !== 'cell' || !this.settings.bool('grid.cellTips')) {
       this.hideCellTip();
       return;
@@ -1256,13 +1270,14 @@ export class App {
     const s = this.sheet;
     const cell = s.getCell(hit.row, hit.col);
     const v = this.doc.engine.getValue(s, hit.row, hit.col);
-    const key = `${s.id}:${hit.row}:${hit.col}`;
+    const key = `${s.id}:${hit.row}:${hit.col}:${hit.tableButton?.part ?? ''}`;
     if (key === this.cellTipKey) return;
     this.hideCellTip();
     this.cellTipKey = key;
     let text = '';
     let cls = 'cell-tip';
-    if (cell?.note) text = cell.note;
+    if (hit.tableButton) text = tableButtonTip(this, hit.tableButton);
+    else if (cell?.note) text = cell.note;
     else if (v instanceof ErrorValue) {
       text = `${ERROR_HELP[v.code]?.title ?? v.code}: ${v.message ?? ''}`;
       cls += ' error';
@@ -1271,10 +1286,10 @@ export class App {
     this.cellTipTimer = setTimeout(() => {
       this.cellTip = h('div', { class: cls }, text);
       document.body.append(this.cellTip);
-      const rect = this.grid.cellRect(hit.row, hit.col);
+      const rect = hit.tableButton ? hit.tableButton.rect : this.grid.cellRect(hit.row, hit.col);
       const host = this.grid.el.getBoundingClientRect();
       this.cellTip.style.left = `${Math.min(window.innerWidth - this.cellTip.offsetWidth - 8, host.left + rect.x + rect.w + 6)}px`;
-      this.cellTip.style.top = `${host.top + rect.y}px`;
+      this.cellTip.style.top = `${host.top + rect.y + (hit.tableButton ? rect.h + 4 : 0)}px`;
     }, 350);
     void e;
   }
@@ -1293,6 +1308,12 @@ export class App {
 
   openFilterMenu(col: number, rect: DOMRect): void {
     new FilterMenu(this, col).open(rect);
+  }
+
+  /** A click on a table's sort arrow or ▾ button. */
+  tableButton(hit: TableButtonHit, shift: boolean, rect: DOMRect): void {
+    this.hideCellTip();
+    tableButtonClick(this, hit, shift, rect);
   }
 
   openLink(url: string): void {

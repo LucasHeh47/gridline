@@ -1,6 +1,7 @@
 // Right-click menus for cells, row headers and column headers.
 import * as L from 'lucide';
 import type { App } from './app';
+import { activeTable } from './tableMenu';
 import { showMenu, type MenuItem } from './widgets';
 
 export function showContextMenu(app: App, e: MouseEvent, kind: 'cell' | 'row' | 'col'): void {
@@ -18,6 +19,7 @@ export function showContextMenu(app: App, e: MouseEvent, kind: 'cell' | 'row' | 
   const hasNote = !!app.sheet.getCell(a.row, a.col)?.note;
   const hasLink = !!app.sheet.getCell(a.row, a.col)?.link;
   const hasFormula = app.sheet.getCell(a.row, a.col)?.f !== undefined;
+  const table = activeTable(app);
   let items: MenuItem[];
   if (kind === 'row') {
     const n = app.sel.fullRows().length || 1;
@@ -79,8 +81,22 @@ export function showContextMenu(app: App, e: MouseEvent, kind: 'cell' | 'row' | 
         submenu: () => [item('edit.clearContents', 'Contents'), item('edit.clearFormats', 'Formatting'), item('edit.clearAll', 'Everything'), item('fmt.clearCf', 'Conditional formatting')],
       },
       { separator: true },
-      { label: 'Sort', icon: L.ArrowUpDown, submenu: () => [item('data.sortAsc'), item('data.sortDesc'), item('data.sortCustom')] },
-      item('data.filter', app.sheet.filter ? 'Remove filter' : 'Filter'),
+      ...(table
+        ? [
+            {
+              label: `Table ${table.name}`,
+              icon: L.Table,
+              submenu: () => [
+                item('table.sortHere', `Sort by ${table.columns[a.col - table.range.c1] ?? 'this column'}`),
+                item('table.originalOrder', 'Original order'),
+                { separator: true },
+                item('table.select', 'Select table'),
+                item('table.options', 'Table options…'),
+                item('table.convert', 'Convert to normal cells'),
+              ],
+            } as MenuItem,
+          ]
+        : [{ label: 'Sort', icon: L.ArrowUpDown, submenu: () => [item('data.sortAsc'), item('data.sortDesc'), item('data.sortCustom')] } as MenuItem, item('data.filter', app.sheet.filter ? 'Remove filter' : 'Filter'), item('table.create', 'Make a table')]),
       { separator: true },
       item('fmt.cells'),
       item('fmt.cf'),

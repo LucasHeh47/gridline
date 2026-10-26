@@ -152,11 +152,22 @@ function matchesCond(doc: Doc, sheet: Sheet, r: number, col: number, cond: Filte
   return true;
 }
 
-/** Recomputes which rows a filter hides. */
+/** Sets the sheet's filter and recomputes which rows filters hide. */
 export function applyFilter(tx: Transaction, doc: Doc, sheet: Sheet, filter: FilterState | null): void {
   tx.setProp(sheet, 'filter', filter);
+  refreshFilters(tx, doc, sheet);
+}
+
+/** Recomputes which rows are hidden by the sheet's filter and its tables' filters. */
+export function refreshFilters(tx: Transaction, doc: Doc, sheet: Sheet): void {
   const hidden = new Set<number>();
-  if (filter) {
+  if (sheet.filter) hideFiltered(doc, sheet, sheet.filter, hidden);
+  for (const t of sheet.tables) if (Object.keys(t.filter).length) hideFiltered(doc, sheet, { range: t.range, conds: t.filter }, hidden);
+  tx.setProp(sheet, 'filterHidden', hidden, true);
+}
+
+function hideFiltered(doc: Doc, sheet: Sheet, filter: FilterState, hidden: Set<number>): void {
+  {
     const statsByCol = new Map<number, { avg: number; topN?: number }>();
     for (const [k, cond] of Object.entries(filter.conds)) {
       const col = +k;
@@ -183,7 +194,6 @@ export function applyFilter(tx: Transaction, doc: Doc, sheet: Sheet, filter: Fil
       }
     }
   }
-  tx.setProp(sheet, 'filterHidden', hidden, true);
 }
 
 /** Expands a single cell to the surrounding block of data (like Excel's Ctrl+A / current region). */

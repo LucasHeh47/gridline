@@ -629,6 +629,7 @@ export class Ribbon {
 
   private insertGroups(): GroupDef[] {
     return [
+      this.group('tables', 'Tables', L.Table, () => [this.cmd('table.create', { big: true, label: 'Table' })]),
       this.group('charts', 'Charts', L.ChartColumn, () => [
         this.cmd('ins.chart.quick', { big: true, label: 'Quick chart' }),
         this.stack(
@@ -675,6 +676,7 @@ export class Ribbon {
   private dataGroups(): GroupDef[] {
     return [
       this.group('sort', 'Sort & filter', L.ArrowUpDown, () => [
+        this.cmd('table.create', { big: true, label: 'Table' }),
         this.cmd('data.filter', { big: true, label: 'Filter', toggle: true }),
         this.stack([this.cmd('data.sortAsc', { label: 'Sort A → Z' })], [this.cmd('data.sortDesc', { label: 'Sort Z → A' })], [this.cmd('data.sortCustom', { label: 'Custom sort' })]),
         this.stack([this.cmd('data.clearFilters', { label: 'Clear filters' })], [this.cmd('data.reapplyFilter', { label: 'Reapply' })]),

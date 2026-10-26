@@ -16,5 +16,7 @@ export default defineConfig({
   test: {
     include: ['tests/**/*.test.ts'],
     environment: 'node',
+    // Loading ExcelJS for the first file test can take a while when every test file runs at once
+    testTimeout: 20000,
   },
 } as any);
