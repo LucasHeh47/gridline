@@ -1,5 +1,7 @@
-// The dropdown shown from a filter button: sort, filter by condition, filter by values.
+// The dropdown shown from a filter button: sort, filter by condition, filter by values. Tables use
+// it too, with their own sorting choices on top (see tableMenu.ts).
 import * as L from 'lucide';
+import type { Range } from '../core/address';
 import { applyFilter, columnValues, sortRange } from '../core/ops/data';
 import type { FilterCond, FilterOp } from '../core/workbook';
 import type { App } from './app';
@@ -24,32 +26,59 @@ const OPS: { value: FilterOp | ''; label: string; inputs: number }[] = [
   { value: 'belowAvg', label: 'Below average', inputs: 0 },
 ];
 
+/** What a filter menu filters: the sheet's filter, or a table's. */
+export interface FilterTarget {
+  /** Header row first. */
+  range: Range;
+  conds: Record<number, FilterCond>;
+  apply(conds: Record<number, FilterCond>, label: string): void;
+  /** Sorting choices and anything else above the filter. */
+  top(close: () => void): HTMLElement[];
+  /** Extra buttons at the bottom, left of Clear. */
+  footer?(close: () => void): HTMLElement[];
+}
+
 export class FilterMenu {
   constructor(
     private app: App,
     private col: number,
+    private target?: FilterTarget,
   ) {}
+
+  /** The sheet's filter (Data → Filter). */
+  private sheetTarget(): FilterTarget | null {
+    const app = this.app;
+    const s = app.sheet;
+    const f = s.filter;
+    if (!f) return null;
+    const col = this.col;
+    const sortBtn = (desc: boolean, close: () => void) =>
+      h('button', {
+        class: 'btn text',
+        style: { justifyContent: 'flex-start' },
+        onclick: () => {
+          close();
+          app.transact(desc ? 'Sort Z → A' : 'Sort A → Z', (tx) => sortRange(tx, app.doc, s, f.range, [{ col, desc }], true));
+          app.transact('Reapply filter', (tx) => applyFilter(tx, app.doc, s, s.filter));
+        },
+      }, icon(desc ? L.ArrowUpZA : L.ArrowDownAZ, 16), desc ? 'Sort Z → A' : 'Sort A → Z');
+    return {
+      range: f.range,
+      conds: f.conds,
+      apply: (conds, label) => app.transact(label, (tx) => applyFilter(tx, app.doc, s, { range: f.range, conds })),
+      top: (close) => [sortBtn(false, close), sortBtn(true, close)],
+    };
+  }
 
   open(rect: DOMRect): void {
     const app = this.app;
     const s = app.sheet;
-    const f = s.filter;
+    const f = this.target ?? this.sheetTarget();
     if (!f) return;
     const col = this.col;
     const existing: FilterCond = f.conds[col] ?? {};
     const values = columnValues(app.doc, s, f.range, col);
     const selected = new Set(existing.values ?? values.map((v) => v.text));
-
-    const sortBtn = (desc: boolean) =>
-      h('button', {
-        class: 'btn text',
-        style: { justifyContent: 'flex-start' },
-        onclick: () => {
-          pop.close();
-          app.transact(desc ? 'Sort Z → A' : 'Sort A → Z', (tx) => sortRange(tx, app.doc, s, f.range, [{ col, desc }], true));
-          app.transact('Reapply filter', (tx) => applyFilter(tx, app.doc, s, s.filter));
-        },
-      }, icon(desc ? L.ArrowUpZA : L.ArrowDownAZ, 16), desc ? 'Sort Z → A' : 'Sort A → Z');
 
     const opSelect = h('select', { class: 'input' }) as HTMLSelectElement;
     for (const o of OPS) opSelect.append(h('option', { value: o.value }, o.label));
@@ -100,7 +129,7 @@ export class FilterMenu {
       if (cond.values || cond.op) conds[col] = cond;
       else delete conds[col];
       pop.close();
-      app.transact('Filter', (tx) => applyFilter(tx, app.doc, s, { range: f.range, conds }));
+      f.apply(conds, 'Filter');
       app.grid.relayout();
       app.focusGrid();
     };
@@ -110,20 +139,20 @@ export class FilterMenu {
         const conds = { ...f.conds };
         delete conds[col];
         pop.close();
-        app.transact('Clear filter', (tx) => applyFilter(tx, app.doc, s, { range: f.range, conds }));
+        f.apply(conds, 'Clear filter');
         app.grid.relayout();
       },
     }, 'Clear');
+    const close = () => pop.close();
 
     const content = h(
       'div',
       { class: 'filter-menu' },
-      sortBtn(false),
-      sortBtn(true),
+      ...f.top(close),
       h('div', { class: 'menu-sep' }),
       h('div', { class: 'field', style: { marginBottom: '0' } }, h('label', null, 'Filter by condition'), opSelect, h('div', { class: 'row' }, in1, in2)),
       h('div', { class: 'field', style: { marginBottom: '0' } }, h('label', null, 'Filter by values'), search, h('label', { class: 'check' }, allBox, 'Select all'), listEl),
-      h('div', { class: 'row', style: { justifyContent: 'flex-end' } }, clearBtn, h('button', { class: 'btn primary', onclick: apply }, 'Apply')),
+      h('div', { class: 'row', style: { justifyContent: 'flex-end' } }, ...(f.footer?.(close) ?? []), h('span', { style: { flex: '1' } }), clearBtn, h('button', { class: 'btn primary', onclick: apply }, 'Apply')),
     );
     content.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !(e.target instanceof HTMLSelectElement)) {

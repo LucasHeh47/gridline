@@ -133,6 +133,38 @@ Press **Esc** or click **✕** to go back to your workbook. If the current windo
 
 ## 6. Sorting, filtering and organizing
 
+### Tables
+
+A table is a block of data with a header row that you can sort by any column with one click.
+
+1. Click anywhere in your data (or select it) and press **Ctrl+T**. You can also use **Insert → Table** or right-click → **Make a table**.
+2. Gridline works out whether the first row is a header. If it guessed wrong, click **First row is the header** or **No header row** in the message that appears. Without one, a header row (Column1, Column2…) is added above your data.
+3. Each column name gets an arrow. **Click it** to sort smallest first (A to Z, oldest first), **again** for largest first, and **a third time** to put the rows back in their original order.
+4. **Shift+click** another column's arrow to sort by it too, for rows that tie on the first column. The arrows show **1**, **2**… in the order they're used.
+
+Sorting understands your data:
+- numbers typed as text (`1,200`, `$5`) sort as numbers;
+- `Item 2` comes before `Item 10`;
+- capital letters don't matter;
+- empty cells always go to the bottom.
+
+The column the table is sorted by is lightly tinted, so you can tell at a glance. When rows change after sorting (you edit a value or add a row), a dot appears on the arrow; click it to sort again.
+
+**Growing the table:**
+- Type in the row just below a table, or the column just right of it, and the table grows to include it.
+- New rows get the formulas of columns where every row has the same formula, like a *Total* column.
+- Formulas that use a whole column (`=SUM(D2:D41)`) grow with the table.
+- A total you type under the table (`=SUM(…)`) stays outside it, so sorting never mixes it in.
+
+**More:**
+- Click **▾** next to an arrow, or press **Alt+↓** on a column name, for the column's menu: sort choices, **Original order**, a filter by values or conditions, and **Table options**.
+- **Table options** sets the table's name, color and banded rows, selects the table, or turns it back into normal cells (the data and formulas stay).
+- When you scroll down a long table, its column names and arrows replace the column letters at the top, so you can sort from anywhere.
+- Formulas can name a table instead of cells: `=SUM(Sales[Amount])` adds up the Amount column however many rows it has, and inside the table `=[@Price]*[@Qty]` uses this row's Price and Qty. Renaming a column or the table updates these formulas.
+- Tables are saved as real Excel tables in `.xlsx` files, including their sort order, filters and colors, and tables in Excel files open as Gridline tables.
+
+### Sorting and filtering other data
+
 - **Sort A→Z / Z→A** sorts the table around the selected cell. **Custom sort** sorts by several columns.
 - **Filter (Ctrl+Shift+L)** adds buttons to the header row. Pick values, or use conditions like "contains", "greater than", "top 10" or "above average".
 - **Remove duplicates** keeps the first copy of each row.
@@ -205,7 +237,7 @@ Yellow cells are the ones meant for you to change. Your favorite NFL team, fanta
 ## 10. Files, saving and Excel
 
 - **Tabs.** Each open workbook gets a tab at the top of the window, like a web browser.
-  - **Ctrl+N** (or **Ctrl+T**, or the **+** button) starts a new workbook in a new tab.
+  - **Ctrl+N** (or the **+** button) starts a new workbook in a new tab.
   - Opening a file, from Gridline or from File Explorer, adds a tab. A file that's already open just switches to its tab.
   - **Ctrl+Tab** and **Ctrl+Shift+Tab** move between tabs. Drag a tab to reorder it.
   - **Ctrl+W** (or the **×**, or a middle-click) closes a tab. **Ctrl+Shift+T** reopens the last file you closed.
@@ -267,7 +299,7 @@ Every command can also be found with **Ctrl+K**. **Ctrl+/** shows this list insi
 | --- | --- |
 | Search commands, cells, sheets and functions | Ctrl+K |
 | Home page | Ctrl+Shift+H |
-| New workbook (new tab) / new window | Ctrl+N or Ctrl+T / Ctrl+Shift+N |
+| New workbook (new tab) / new window | Ctrl+N / Ctrl+Shift+N |
 | Next / previous workbook tab | Ctrl+Tab / Ctrl+Shift+Tab |
 | Close the tab / reopen the last closed file | Ctrl+W / Ctrl+Shift+T |
 | Open / Save / Save as | Ctrl+O / Ctrl+S / Ctrl+Shift+S |
@@ -284,6 +316,7 @@ Every command can also be found with **Ctrl+K**. **Ctrl+/** shows this list insi
 | AutoSum | Alt+= |
 | Insert function | Shift+F3 |
 | Quick chart | F11 |
+| Make a table / a table column's menu (in its header) | Ctrl+T / Alt+↓ |
 | Filter on/off | Ctrl+Shift+L |
 | Insert rows / delete rows | Ctrl+Shift+= / Ctrl+- |
 | Today's date / current time | Ctrl+; / Ctrl+Shift+; |

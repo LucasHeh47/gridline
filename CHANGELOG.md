@@ -30,6 +30,20 @@
   - mistakes show above the steps, like a variable that's used but never set ("Did you mean {Total}?");
   - boxes that don't apply are hidden (the replacement text only shows for *replace*).
   - Two new examples: **Add up paid amounts** and **A sheet per quarter**.
+- **Tables (Ctrl+T), made for sorting.** Click in your data and press **Ctrl+T** (or **Insert → Table**). Every column name gets an arrow:
+  - **one click** sorts smallest first (A to Z, oldest first), **two** largest first, **three** puts the rows back in their original order, which Excel can't do once you've sorted;
+  - **Shift+click** another arrow to sort by it too; the arrows show 1, 2… in order;
+  - sorting understands your data: numbers typed as text (`1,200`, `$5`) sort as numbers, `Item 2` comes before `Item 10`, capitals don't matter, and empty cells go last;
+  - the sorted column is tinted, and a dot on its arrow says rows changed since sorting; click to sort again;
+  - in a long table, the column names and arrows take the place of the column letters once you scroll past the header.
+- **Tables are easier than in Excel:**
+  - no dialog: Gridline works out whether the first row is a header (and fixes it in one click if it guessed wrong), splits merged cells, and widens columns whose names don't fit;
+  - typing just below or right of a table makes it bigger; new rows get the formulas of calculated columns, and formulas that use a whole column (`=SUM(D2:D41)`) grow with it;
+  - a total typed under a table stays outside it, so sorting never mixes it in;
+  - each column has a **▾** menu (or **Alt+↓**) with sort choices, **Original order** and a filter; **Table options** sets the name, color and banded rows, or turns the table back into normal cells.
+- **Excel's structured references work:** `=SUM(Sales[Amount])`, `[@Price]*[@Qty]`, `Sales[#All]`, `Sales[[#Headers],[Qty]]` and more. Renaming a table or a column updates the formulas that use it. Before, these showed #VALUE!.
+- Tables are saved as real Excel tables in `.xlsx` and `.xlsm` files (sort order, filters, color and banding included), and tables in Excel files open as tables.
+- **Ctrl+T** now makes a table, like in Excel; **Ctrl+N** still opens a new workbook tab.
 - **Tabs for workbooks.** Open several files in one window, each in its own tab at the top, like a web browser:
   - **Ctrl+N** opens a new workbook in a new tab;
   - files you open, from Gridline or from File Explorer, open in tabs too;

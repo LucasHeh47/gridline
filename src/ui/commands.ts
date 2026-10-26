@@ -11,6 +11,8 @@ import { restructure, setHidden } from '../core/ops/structure';
 import { validateSheetName, type ChartType } from '../core/workbook';
 import type { App } from './app';
 import { platform } from './platform';
+import { activeTable, convertTable, makeTable, openTableOptions, sortTableBy } from './tableMenu';
+import { canRestoreOrder, nextSort } from '../core/tables';
 import { dialog, promptDialog, toast } from './widgets';
 import { openPalette } from './palette';
 import { showShortcuts, showAbout } from './help';
@@ -121,7 +123,7 @@ export class Commands {
     const style = () => app.styleAtActive();
 
     // ---------- File ----------
-    a({ id: 'file.new', title: 'New workbook (new tab)', category: 'File', keys: ['Ctrl+N', 'Ctrl+T'], icon: L.FilePlus, keywords: 'tab blank', global: true, run: () => app.newWorkbook() });
+    a({ id: 'file.new', title: 'New workbook (new tab)', category: 'File', keys: ['Ctrl+N'], icon: L.FilePlus, keywords: 'tab blank', global: true, run: () => app.newWorkbook() });
     a({ id: 'file.closeTab', title: 'Close this workbook tab', category: 'File', keys: ['Ctrl+W', 'Ctrl+F4'], icon: L.X, keywords: 'tab close file', global: true, run: () => void app.closeBook(app.book) });
     a({ id: 'file.nextTab', title: 'Next workbook tab', category: 'File', keys: ['Ctrl+Tab'], icon: L.ArrowRight, keywords: 'tab switch', global: true, enabled: () => app.books.length > 1, run: () => app.cycleBook(1) });
     a({ id: 'file.prevTab', title: 'Previous workbook tab', category: 'File', keys: ['Ctrl+Shift+Tab'], icon: L.ArrowLeft, keywords: 'tab switch', global: true, enabled: () => app.books.length > 1, run: () => app.cycleBook(-1) });
@@ -311,6 +313,30 @@ export class Commands {
     // ---------- Data ----------
     a({ id: 'data.sortAsc', title: 'Sort A → Z (smallest to largest)', category: 'Data', icon: L.ArrowDownAZ, keywords: 'sort ascending', run: () => quickSort(app, false) });
     a({ id: 'data.sortDesc', title: 'Sort Z → A (largest to smallest)', category: 'Data', icon: L.ArrowUpZA, keywords: 'sort descending', run: () => quickSort(app, true) });
+    // Tables
+    a({ id: 'table.create', title: 'Make a table (sort by any column with one click)', category: 'Data', keys: ['Ctrl+T'], icon: L.Table, keywords: 'format as table list sortable banded ctrl+t', run: () => makeTable(app) });
+    a({ id: 'table.options', title: 'Table options (name, color, banded rows)…', category: 'Data', icon: L.Settings2, keywords: 'table rename style color', enabled: () => !!activeTable(app), run: () => {
+      const t = activeTable(app);
+      if (t) openTableOptions(app, t, app.grid.screenRect(app.grid.cellRect(t.range.r1, t.range.c1)));
+    } });
+    a({ id: 'table.originalOrder', title: 'Put the table back in its original order', category: 'Data', icon: L.Undo2, keywords: 'table unsort reset order', enabled: () => !!activeTable(app) && canRestoreOrder(activeTable(app)!), run: () => {
+      const t = activeTable(app);
+      if (t) sortTableBy(app, t, 'original');
+    } });
+    a({ id: 'table.sortHere', title: 'Sort the table by this column', category: 'Data', icon: L.ArrowUpDown, keywords: 'table sort column', enabled: () => !!activeTable(app), run: () => {
+      const t = activeTable(app);
+      if (t) sortTableBy(app, t, nextSort(t, app.sel.active.col, { stale: app.grid.isTableStale(t) }));
+    } });
+    a({ id: 'table.select', title: 'Select the whole table', category: 'Data', icon: L.SquareDashed, enabled: () => !!activeTable(app), run: () => {
+      const t = activeTable(app);
+      if (!t) return;
+      app.sel.setRange(t.range, { row: t.range.r1, col: t.range.c1 });
+      app.onSelectionChanged();
+    } });
+    a({ id: 'table.convert', title: 'Convert the table to normal cells', category: 'Data', icon: L.Table2, keywords: 'table remove range unformat', enabled: () => !!activeTable(app), run: () => {
+      const t = activeTable(app);
+      if (t) convertTable(app, t);
+    } });
     a({ id: 'data.sortCustom', title: 'Custom sort…', category: 'Data', icon: L.ArrowUpDown, keywords: 'sort multiple columns levels', run: () => app.panel.open('sort') });
     a({ id: 'data.validation', title: 'Data validation — limit what can be typed in cells', category: 'Data', icon: L.ListChecks, keywords: 'dropdown list allowed values rule input message error alert restrict', run: () => app.panel.open('validation') });
     a({ id: 'data.circleInvalid', title: 'Circle invalid data', category: 'Data', icon: L.CircleDashed, keywords: 'validation check', run: () => {
@@ -672,6 +698,12 @@ function insertChart(app: App, type: ChartType): void {
 }
 
 function quickSort(app: App, desc: boolean): void {
+  // In a table: sort the table by this column (the header stays, and the table remembers it)
+  const t = activeTable(app);
+  if (t) {
+    sortTableBy(app, t, [{ col: app.sel.active.col, desc }]);
+    return;
+  }
   const region = app.dataRegion();
   if (region.r1 === region.r2 && region.c1 === region.c2) return;
   const header = detectHeader(app.doc, app.sheet, region);
@@ -686,6 +718,10 @@ function quickSort(app: App, desc: boolean): void {
 
 function toggleFilter(app: App): void {
   const s = app.sheet;
+  if (activeTable(app)) {
+    toast('Tables have their own filters: click ▾ in a column’s header (or press Alt+↓ there).');
+    return;
+  }
   if (s.filter) {
     app.transact('Remove filter', (tx) => applyFilter(tx, app.doc, s, null));
     return;

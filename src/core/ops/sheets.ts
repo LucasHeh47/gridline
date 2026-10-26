@@ -2,6 +2,7 @@
 import { keyCol, keyRow } from '../address';
 import { deleteSheetRefs, renameSheetRefs } from '../formula/refs';
 import type { Transaction } from '../history';
+import { copyTables } from '../tables';
 import { Sheet, type Workbook } from '../workbook';
 
 export function addSheet(tx: Transaction, wb: Workbook, name?: string, index?: number): Sheet {
@@ -100,6 +101,7 @@ export function duplicateSheet(tx: Transaction, wb: Workbook, sheet: Sheet): She
     anchor: { ...c.anchor },
   }));
   copy.validations = sheet.validations.map((v) => ({ ...v, id: v.id + '-copy', ranges: v.ranges.map((r) => ({ ...r })) }));
+  copyTables(wb, sheet, copy);
   copy.buttons = sheet.buttons.map((b) => ({ ...b, id: b.id + '-' + Math.random().toString(36).slice(2, 7), anchor: { ...b.anchor } }));
   copy.tabColor = sheet.tabColor;
   copy.showGrid = sheet.showGrid;

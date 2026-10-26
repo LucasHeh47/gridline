@@ -1,6 +1,7 @@
 // The calculation engine: tracks dependencies, recalculates incrementally, and spills arrays.
 import { cellKey, formatCell, MAX_COLS, MAX_ROWS, type Range } from '../address';
 import type { TouchedCell } from '../history';
+import { expandStructured } from '../tableRefs';
 import { Errors, ErrorValue, type Scalar } from '../values';
 import type { Sheet, Workbook } from '../workbook';
 import { evaluate, evaluateFormula } from './evaluator';
@@ -257,7 +258,7 @@ export class Engine {
 
   /** Evaluates formula text (without '=') at a position. */
   evalText(text: string, sheet: Sheet, row: number, col: number): Scalar | Matrix {
-    const p = parseFormula(text);
+    const p = parseFormula(this.withTables(text, sheet, row, col));
     if (!p.ast) return Errors.value(p.error?.message);
     const v = this.evalAst(p.ast, sheet, row, col);
     return this.materialize(v, sheet);
@@ -293,9 +294,14 @@ export class Engine {
 
   // ---------- registration ----------
 
+  /** Formula text with table references (Sales[Amount], [@Price]) as ordinary ranges. */
+  private withTables(text: string, sheet: Sheet, row: number, col: number): string {
+    return this.wb.hasTables || text.includes('[') ? expandStructured(text, this.wb, sheet, row, col) : text;
+  }
+
   private register(sheet: Sheet, row: number, col: number, text: string): void {
     const g = gkey(sheet.id, row, col);
-    const parsed = parseFormula(text);
+    const parsed = parseFormula(this.withTables(text, sheet, row, col));
     const info: FormulaInfo = {
       sheetId: sheet.id,
       row,

@@ -6,11 +6,13 @@ import { normalizeFuncName, parseFormula, type Node } from '../formula/parser';
 import { FUNCTIONS, XLFN_FUNCS, XLWS_FUNCS } from '../formula/functions';
 import { Matrix, RangeRef } from '../formula/types';
 import { tokenize, type Token } from '../formula/tokenizer';
+import { structuredForFile } from '../tableRefs';
 import { applyTint, type BorderSide, type BorderStyle, type HAlign, type Style, type VAlign } from '../styles';
 import { ErrorValue, parseErrorCode, type ErrorCode, type Scalar } from '../values';
 import { Sheet, Workbook, type CFRule, type CFStyle, type CFValue, type Cell } from '../workbook';
 import { prepareForExcelJS, readCharts, readNotes, writeCharts } from './xlsxCharts';
 import { readMacros, writeMacros } from './xlsxMacros';
+import { readTables, writeTables } from './xlsxTables';
 import { readValidations, writeValidations } from './xlsxValidation';
 
 type ExcelJS = typeof ExcelJSTypes;
@@ -657,6 +659,11 @@ export async function readXlsx(data: Uint8Array): Promise<ReadResult> {
   } catch {
     warnings.add("Some data validation rules couldn't be read.");
   }
+  try {
+    for (const w of await readTables(data, wb)) warnings.add(w);
+  } catch {
+    warnings.add("The tables in this file couldn't be read; their data is kept as ordinary cells.");
+  }
 
   // Macros: VBA code, sheet code names and Gridline's step macros/buttons
   let hasVba = false;
@@ -754,7 +761,8 @@ export async function writeXlsx(doc: Doc, opts: { macroEnabled?: boolean } = {})
         const value = doc.engine.getValue(sheet, r, c);
         const result = toResult(value);
         const spill = doc.engine.spillAt(sheet, r, c);
-        const formula = toFileFormula(cell.f);
+        // Files name the table in every structured reference: [@Qty] is Sales[[#This Row],[Qty]]
+        const formula = toFileFormula(wb.hasTables ? structuredForFile(cell.f, wb, sheet, r, c) : cell.f);
         if (spill) {
           xc.value = { formula, result, shareType: 'array', ref: formatRange(spill) } as unknown as ExcelJSTypes.CellValue;
         } else if (needsArrayEntry(parseFormula(cell.f).ast)) {
@@ -799,6 +807,8 @@ export async function writeXlsx(doc: Doc, opts: { macroEnabled?: boolean } = {})
       if (xr) ws.addConditionalFormatting({ ref: rule.ranges.map((r) => formatRange(r)).join(' '), rules: [xr] });
     }
     if (sheet.filter) ws.autoFilter = formatRange(sheet.filter.range);
+    // A table's header cells must hold its column names as text
+    for (const t of sheet.tables) t.columns.forEach((name, i) => (ws.getCell(t.range.r1 + 1, t.range.c1 + i + 1).value = name));
   }
 
   for (const dn of wb.names.values()) {
@@ -813,6 +823,7 @@ export async function writeXlsx(doc: Doc, opts: { macroEnabled?: boolean } = {})
   let buf: Uint8Array = new Uint8Array((await xwb.xlsx.writeBuffer()) as ArrayBuffer);
   if (wb.sheets.some((s) => s.charts.length)) buf = await writeCharts(buf, doc);
   buf = await writeValidations(buf, wb);
+  buf = await writeTables(buf, wb);
   return writeMacros(buf, wb, !!opts.macroEnabled);
 }
 

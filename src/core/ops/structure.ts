@@ -2,6 +2,7 @@
 import { keyCol, keyRow, MAX_COLS, MAX_ROWS, type Range } from '../address';
 import { adjustForStructure, adjustRange, type StructuralChange } from '../formula/refs';
 import type { Transaction } from '../history';
+import { nameNewColumns, tablesAfterStructure } from '../tables';
 import type { Cell, ChartDef, Sheet, Workbook } from '../workbook';
 
 function shiftIndex(i: number, ch: StructuralChange): number | null {
@@ -121,6 +122,11 @@ export function restructure(tx: Transaction, wb: Workbook, sheet: Sheet, axis: '
       }
       tx.setProp(sheet, 'filter', { range, conds });
     }
+  }
+  if (sheet.tables.length) {
+    tx.setProp(sheet, 'tables', tablesAfterStructure(sheet.tables, axis, at, count), true);
+    // Columns inserted inside a table need header names
+    if (axis === 'col' && count > 0) nameNewColumns(tx, sheet);
   }
   for (const s of wb.sheets) {
     if (!s.charts.length) continue;

@@ -97,6 +97,43 @@ export interface FilterState {
   conds: Record<number, FilterCond>;
 }
 
+// ---- Tables ----
+
+export type TableColor = 'blue' | 'green' | 'orange' | 'gold' | 'gray';
+
+export interface TableSortKey {
+  /** Absolute column index. */
+  col: number;
+  desc: boolean;
+}
+
+/**
+ * A table (Ctrl+T): a block of rows with a header row whose columns can be sorted with one click.
+ * Tables are replaced, never changed in place, so undo can restore an earlier one.
+ */
+export interface TableDef {
+  id: string;
+  /** Used in formulas: =SUM(Sales[Amount]). */
+  name: string;
+  /** The header row (r1) and the data rows below it. */
+  range: Range;
+  /** Column names, as in the header cells. */
+  columns: string[];
+  color: TableColor;
+  banded: boolean;
+  /** How the rows are sorted, first key first (empty = not sorted). */
+  sort: TableSortKey[];
+  /**
+   * Where each data row was before the first sort: order[i] ranks the row now at position i, so
+   * "Original order" can put them back. Missing until the table is first sorted.
+   */
+  order?: number[];
+  /** Rows shown, by absolute column (like the sheet filter). */
+  filter: Record<number, FilterCond>;
+  /** The table style from a file (TableStyleMedium2), written back while the color isn't changed. */
+  fileStyle?: string;
+}
+
 // ---- Charts ----
 
 export type ChartType = 'column' | 'bar' | 'line' | 'area' | 'pie' | 'doughnut' | 'scatter';
@@ -150,6 +187,7 @@ export class Sheet {
   freeze = { rows: 0, cols: 0 };
   cf: CFRule[] = [];
   filter: FilterState | null = null;
+  tables: TableDef[] = [];
   charts: ChartDef[] = [];
   /** Buttons that run macros. */
   buttons: SheetButton[] = [];
@@ -301,6 +339,17 @@ export class Workbook {
 
   getName(name: string): DefinedName | undefined {
     return this.names.get(name.toUpperCase());
+  }
+
+  /** A table by name (any sheet), ignoring case. */
+  table(name: string): { sheet: Sheet; table: TableDef } | undefined {
+    const n = name.toLowerCase();
+    for (const sheet of this.sheets) for (const table of sheet.tables) if (table.name.toLowerCase() === n) return { sheet, table };
+    return undefined;
+  }
+
+  get hasTables(): boolean {
+    return this.sheets.some((s) => s.tables.length > 0);
   }
 }
 

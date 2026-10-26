@@ -1,19 +1,31 @@
 // The spreadsheet grid: a virtualized canvas with native scrolling, frozen panes and mouse interaction.
 import { cellKey, colToName, MAX_COLS, MAX_ROWS, normalize, type Range } from '../../core/address';
 import { formatValue } from '../../core/numfmt';
-import type { BorderSide, Style } from '../../core/styles';
+import { luminance, parseHex, toHex, type BorderSide, type Style } from '../../core/styles';
+import { sortIsStale, TABLE_COLORS } from '../../core/tables';
 import { ErrorValue, type Scalar } from '../../core/values';
-import type { Sheet } from '../../core/workbook';
+import type { Sheet, TableDef } from '../../core/workbook';
 import type { App } from '../app';
 import { Axis } from './axis';
 import { displayFill, displayText, readTheme, type GridTheme } from './theme';
 
+/** A click on one of a table's header buttons: the sort arrow or the menu. */
+export interface TableButtonHit {
+  table: TableDef;
+  col: number;
+  part: 'sort' | 'menu';
+  /** The button, in grid coordinates. */
+  rect: { x: number; y: number; w: number; h: number };
+}
+
 export type Hit =
   | { kind: 'corner' }
-  | { kind: 'colHeader'; col: number; edge: number | null }
+  | { kind: 'colHeader'; col: number; edge: number | null; tableButton?: TableButtonHit | null }
   | { kind: 'rowHeader'; row: number; edge: number | null }
-  | { kind: 'cell'; row: number; col: number; fillHandle: boolean; filterButton: boolean }
+  | { kind: 'cell'; row: number; col: number; fillHandle: boolean; filterButton: boolean; tableButton: TableButtonHit | null }
   | { kind: 'none' };
+
+type Box = { x: number; y: number; w: number; h: number };
 
 interface RefHighlight {
   sheetId: number;
@@ -29,6 +41,13 @@ type Drag =
   | { kind: 'resizeCol'; col: number; startX: number; startW: number; cols: number[] }
   | { kind: 'resizeRow'; row: number; startY: number; startH: number; rows: number[] }
   | { kind: 'point'; anchor: { row: number; col: number } };
+
+/** `a` mixed into `b` (weight 0–1), for hex colors. */
+function mixHex(a: string, b: string, w: number): string {
+  const [ar, ag, ab] = parseHex(a);
+  const [br, bg, bb] = parseHex(b);
+  return toHex(Math.round(ar * w + br * (1 - w)), Math.round(ag * w + bg * (1 - w)), Math.round(ab * w + bb * (1 - w)));
+}
 
 export const REF_COLORS = ['#4ea1ff', '#ff7a6b', '#b38cff', '#3fcf8e', '#ffb547', '#2fc6d6', '#ff6fb1', '#a3d65c'];
 
@@ -263,7 +282,10 @@ export class GridView {
       let edge: number | null = null;
       if (Math.abs(x - right) <= 4) edge = col;
       else if (Math.abs(x - left) <= 4 && col > 0) edge = this.cols.step(col, -1);
-      return { kind: 'colHeader', col, edge };
+      // A table's names (and buttons) show here once its header row scrolls away
+      const sticky = edge === null ? this.stickyTable() : null;
+      const tableButton = sticky && col >= sticky.range.c1 && col <= sticky.range.c2 ? this.tableButtonAt(sticky, col, { x: left, y: 0, w: right - left, h: this.headerH }, x, y) : null;
+      return { kind: 'colHeader', col, edge, tableButton };
     }
     if (x < this.headerW) {
       const row = this.rowAt(y);
@@ -292,7 +314,145 @@ export class GridView {
       const bs = this.filterButtonSize();
       if (x >= cr.x + cr.w - bs - 3 && x <= cr.x + cr.w - 1) filterButton = true;
     }
-    return { kind: 'cell', row, col, fillHandle, filterButton };
+    let tableButton: TableButtonHit | null = null;
+    const table = fillHandle ? undefined : this.sheet.tables.find((t) => t.range.r1 === row && col >= t.range.c1 && col <= t.range.c2);
+    if (table) tableButton = this.tableButtonAt(table, col, this.cellRect(row, col), x, y);
+    return { kind: 'cell', row, col, fillHandle, filterButton, tableButton };
+  }
+
+  // ---------- tables ----------
+
+  /** Where a table header cell's buttons go: the sort arrow, then the menu (left out when narrow). */
+  private headerButtons(rect: Box): { sort: Box; menu: Box | null } {
+    const bs = this.filterButtonSize();
+    const y = rect.y + (rect.h - bs) / 2;
+    const menu = rect.w >= bs * 3.6 ? { x: rect.x + rect.w - bs - 3, y, w: bs, h: bs } : null;
+    const sort = { x: (menu ? menu.x - 2 : rect.x + rect.w - 3) - bs, y, w: bs, h: bs };
+    return { sort, menu };
+  }
+
+  /** Width a table header cell needs at 100% zoom: its name in bold, plus the buttons. */
+  tableHeaderWidth(name: string): number {
+    const font = `700 ${((11 * 96) / 72).toFixed(2)}px "Calibri", Calibri, "Segoe UI", Arial, sans-serif`;
+    return Math.ceil(this.measure(font, name) + PAD * 2 + 16 * 2 + 12);
+  }
+
+  /** Width the header buttons take from a header cell's text. */
+  tableButtonsWidth(cellW: number): number {
+    const bs = this.filterButtonSize();
+    return cellW >= bs * 3.6 ? bs * 2 + 8 : bs + 6;
+  }
+
+  private tableButtonAt(t: TableDef, col: number, rect: Box, x: number, y: number): TableButtonHit | null {
+    const { sort, menu } = this.headerButtons(rect);
+    const inside = (b: Box) => x >= b.x - 1 && x <= b.x + b.w + 1 && y >= b.y - 2 && y <= b.y + b.h + 2;
+    if (inside(sort)) return { table: t, col, part: 'sort', rect: sort };
+    if (menu && inside(menu)) return { table: t, col, part: 'menu', rect: menu };
+    return null;
+  }
+
+  /** The table whose header row has scrolled out of view (its names then replace the column letters). */
+  stickyTable(): TableDef | null {
+    const s = this.sheet;
+    if (!s.tables.length) return null;
+    const top = this.rows.indexAt(this.frozenH + this.scrollY);
+    const list = s.tables.filter((t) => t.range.r1 >= s.freeze.rows && t.range.r1 < top && t.range.r2 >= top);
+    if (!list.length) return null;
+    const a = this.app.sel.active;
+    return list.find((t) => a.col >= t.range.c1 && a.col <= t.range.c2 && a.row >= t.range.r1 && a.row <= t.range.r2) ?? list[0];
+  }
+
+  private staleCache = new Map<string, { key: string; stale: boolean }>();
+
+  /** Whether a sorted table's rows changed since (cached until the next edit). */
+  isTableStale(t: TableDef): boolean {
+    if (!t.sort.length) return false;
+    const key = `${this.app.doc.history.version}|${t.range.r2}|${t.sort.map((k) => `${k.col}${k.desc ? 'd' : 'a'}`).join(',')}`;
+    const hit = this.staleCache.get(t.id);
+    if (hit && hit.key === key) return hit.stale;
+    const stale = sortIsStale(this.app.doc, this.sheet, t);
+    this.staleCache.set(t.id, { key, stale });
+    return stale;
+  }
+
+  private drawTableButtons(t: TableDef, col: number, rect: Box, bg: string): void {
+    const ctx = this.ctx;
+    const { sort, menu } = this.headerButtons(rect);
+    const onDark = luminance(bg) < 0.45;
+    const ink = onDark ? '#ffffff' : this.theme.headerText;
+    const plate = (b: Box, strong: boolean) => {
+      ctx.fillStyle = onDark ? `rgba(255,255,255,${strong ? 0.3 : 0.13})` : strong ? this.theme.accent + '33' : this.theme.dark ? '#2a2f38' : '#e8eaee';
+      ctx.beginPath();
+      ctx.roundRect(b.x, b.y, b.w, b.h, 3);
+      ctx.fill();
+    };
+    const rank = t.sort.findIndex((k) => k.col === col);
+    plate(sort, rank >= 0);
+    const cx = sort.x + sort.w / 2;
+    const cy = sort.y + sort.h / 2;
+    ctx.fillStyle = ink;
+    const tri = (x: number, y: number, up: boolean, size: number) => {
+      ctx.beginPath();
+      ctx.moveTo(x - size, up ? y + size * 0.55 : y - size * 0.55);
+      ctx.lineTo(x + size, up ? y + size * 0.55 : y - size * 0.55);
+      ctx.lineTo(x, up ? y - size * 0.75 : y + size * 0.75);
+      ctx.closePath();
+      ctx.fill();
+    };
+    if (rank < 0) {
+      // Not sorted: a faint up-and-down arrow
+      ctx.globalAlpha = 0.7;
+      tri(cx, cy - 3, true, 2.6);
+      tri(cx, cy + 3.2, false, 2.6);
+      ctx.globalAlpha = 1;
+    } else {
+      const multi = t.sort.length > 1;
+      tri(multi ? cx + 2 : cx, cy, !t.sort[rank].desc, 3.6);
+      if (multi) {
+        ctx.font = `600 ${Math.round(8 * Math.max(1, this.zoom))}px "Segoe UI", system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(rank + 1), sort.x + 4, cy + 0.5);
+      }
+      if (rank === 0 && this.isTableStale(t)) {
+        // Rows changed since sorting: a dot says "click to sort again"
+        ctx.fillStyle = '#ffc247';
+        ctx.beginPath();
+        ctx.arc(sort.x + sort.w - 1.5, sort.y + 1.5, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    if (menu) {
+      const filtered = !!t.filter[col];
+      plate(menu, filtered);
+      const mx = menu.x + menu.w / 2;
+      const my = menu.y + menu.h / 2;
+      ctx.strokeStyle = ink;
+      ctx.fillStyle = ink;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      if (filtered) {
+        ctx.moveTo(mx - 4, my - 3.5);
+        ctx.lineTo(mx + 4, my - 3.5);
+        ctx.lineTo(mx + 1, my + 0.5);
+        ctx.lineTo(mx + 1, my + 4);
+        ctx.lineTo(mx - 1, my + 3);
+        ctx.lineTo(mx - 1, my + 0.5);
+        ctx.closePath();
+        ctx.fill();
+      } else {
+        ctx.moveTo(mx - 3.5, my - 1.5);
+        ctx.lineTo(mx, my + 2);
+        ctx.lineTo(mx + 3.5, my - 1.5);
+        ctx.stroke();
+      }
+    }
+  }
+
+  /** A grid rectangle in window coordinates (to open a menu next to it). */
+  screenRect(r: Box): DOMRect {
+    const host = this.el.getBoundingClientRect();
+    return new DOMRect(host.left + r.x, host.top + r.y, r.w, r.h);
   }
 
   private filterButtonSize(): number {
@@ -518,6 +678,23 @@ export class GridView {
 
     const merges = s.merges.filter((m) => m.r2 >= r1 && m.r1 <= r2 && m.c2 >= c1 && m.c1 <= c2);
     const inMerge = (r: number, c: number) => merges.find((m) => r >= m.r1 && r <= m.r2 && c >= m.c1 && c <= m.c2);
+    const tables = s.tables.filter((tb) => tb.range.r2 >= r1 && tb.range.r1 <= r2 && tb.range.c2 >= c1 && tb.range.c1 <= c2);
+    const tableIn = (r: number, c: number) => (tables.length ? tables.find((tb) => r >= tb.range.r1 && r <= tb.range.r2 && c >= tb.range.c1 && c <= tb.range.c2) : undefined);
+    const headerBgs = new Map<string, string>();
+    // Bands count the rows you can see, so a filtered table still alternates
+    const bands = new Map<string, number>();
+    for (const tb of tables) {
+      let idx = -1;
+      for (const rp of rowPos) {
+        if (rp.r <= tb.range.r1 || rp.r > tb.range.r2) continue;
+        if (idx < 0) {
+          idx = rp.r - tb.range.r1 - 1;
+          for (const hr of s.filterHidden) if (hr > tb.range.r1 && hr < rp.r) idx--;
+          for (const hr of s.hiddenRows) if (hr > tb.range.r1 && hr < rp.r && !s.filterHidden.has(hr)) idx--;
+        }
+        bands.set(`${tb.id}:${rp.r}`, idx++);
+      }
+    }
 
     interface TextJob {
       r: number;
@@ -548,15 +725,29 @@ export class GridView {
       // Light fills (the cell's own or from conditional formatting) become dark tints in dark mode
       const cfFill = res?.style?.fill ?? res?.fill;
       const fillHex = cfFill ?? st.fill;
+      // Tables: a colored header row and banded rows, under any fill of the cells' own
+      const tb = tableIn(r, c);
+      const isHead = !!tb && r === tb.range.r1;
+      const band = tb && !isHead ? (bands.get(`${tb.id}:${r}`) ?? r - tb.range.r1 - 1) : 0;
+      const tableFill = tb && !fillHex ? (isHead ? TABLE_COLORS[tb.color].header : tb.banded && band % 2 === 0 ? TABLE_COLORS[tb.color].band : undefined) : undefined;
       let bg = t.cellBg;
-      if (fillHex) {
-        bg = displayFill(t, fillHex);
+      if (fillHex || tableFill) {
+        // In dark mode bands are a faint wash of the table's color
+        bg = isHead && tableFill ? tableFill : !fillHex && t.dark ? mixHex(TABLE_COLORS[tb!.color].header, t.cellBg, 0.14) : displayFill(t, (fillHex ?? tableFill)!);
         ctx.fillStyle = bg;
         ctx.fillRect(x, y, w - (merged ? 0 : 1), h - (merged ? 0 : 1));
       } else if (merged) {
         ctx.fillStyle = t.cellBg;
         ctx.fillRect(x, y, w - 1, h - 1);
       }
+      // The column a table is sorted by is tinted, so you can tell at a glance
+      if (tb && !isHead && tb.sort[0]?.col === c) {
+        ctx.fillStyle = t.accent;
+        ctx.globalAlpha = t.dark ? 0.1 : 0.07;
+        ctx.fillRect(x, y, w - 1, h - 1);
+        ctx.globalAlpha = 1;
+      }
+      if (isHead) headerBgs.set(`${tb!.id}:${c}`, bg);
       if (res?.bar) {
         const b = res.bar;
         const bx = x + 2 + (w - 5) * b.from;
@@ -577,8 +768,11 @@ export class GridView {
       if (v !== null && v !== '' || res?.icon) {
         // Table functions (AMORTIZATION, STOCKHISTORY…) suggest formats for their columns
         const spillFmt = !st.numFmt && typeof v === 'number' ? this.app.doc.engine.spillFormatAt(s, r, c) : undefined;
-        const jst = spillFmt ? { ...st, numFmt: spillFmt } : st;
-        jobs.push({ r, c, x, y, w, h, st: jst, v, bg, merged, cfStyle: res?.style, hideValue: res?.hideValue, icon: res?.icon });
+        let jst = spillFmt ? { ...st, numFmt: spillFmt } : st;
+        // Header names are bold (white on the table's color), and leave room for the buttons
+        if (isHead) jst = { ...jst, bold: true, color: tableFill ? (st.color ?? '#ffffff') : st.color };
+        const tw = isHead ? Math.max(8, w - this.tableButtonsWidth(w)) : w;
+        jobs.push({ r, c, x, y, w: tw, h, st: jst, v, bg, merged, cfStyle: res?.style, hideValue: res?.hideValue, icon: res?.icon });
       }
       if (cell?.note && showNotes) marks.push({ x, y, w, h, note: true, error: false });
       if (v instanceof ErrorValue && v.code !== '#BUSY!' && showErrors) marks.push({ x, y, w, h, note: false, error: true });
@@ -644,6 +838,20 @@ export class GridView {
       }
       ctx.closePath();
       ctx.fill();
+    }
+
+    // Tables: an outline, and the buttons in the header row
+    for (const tb of tables) {
+      const look = TABLE_COLORS[tb.color];
+      const rr = this.rangeRect(tb.range);
+      ctx.strokeStyle = t.dark ? look.header : look.line;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(Math.round(rr.x) - 0.5, Math.round(rr.y) - 0.5, Math.round(rr.w), Math.round(rr.h));
+      if (tb.range.r1 < r1 || tb.range.r1 > r2) continue;
+      for (let c = Math.max(tb.range.c1, c1); c <= Math.min(tb.range.c2, c2); c++) {
+        if (this.cols.size(c) === 0) continue;
+        this.drawTableButtons(tb, c, this.cellRect(tb.range.r1, c), headerBgs.get(`${tb.id}:${c}`) ?? TABLE_COLORS[tb.color].header);
+      }
     }
 
     // Filter buttons
@@ -1193,13 +1401,42 @@ export class GridView {
       ctx.fillStyle = t.headerLine;
       ctx.fillRect(Math.round(x + w) - 1, 4, 1, hy - 8);
     };
+    const sticky = this.stickyTable();
+    const drawSticky = (c: number) => {
+      if (!sticky || c < sticky.range.c1 || c > sticky.range.c2) return;
+      const w = this.cols.size(c);
+      if (w === 0) return;
+      const x = this.colX(c);
+      const color = TABLE_COLORS[sticky.color].header;
+      ctx.fillStyle = color;
+      ctx.fillRect(x, 0, w - 1, hy);
+      const name = sticky.columns[c - sticky.range.c1] ?? '';
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x + 4, 0, Math.max(0, w - this.tableButtonsWidth(w) - 6), hy);
+      ctx.clip();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `600 ${fontPx}px "Segoe UI", system-ui, sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(name, x + 6, hy / 2 + 0.5);
+      ctx.restore();
+      ctx.font = `${fontPx}px "Segoe UI", system-ui, sans-serif`;
+      this.drawTableButtons(sticky, c, { x, y: 0, w, h: hy }, color);
+    };
     ctx.save();
     ctx.beginPath();
     ctx.rect(hx + this.frozenW, 0, W - hx - this.frozenW, hy);
     ctx.clip();
-    for (let c = scrollC1; c <= lastC; c++) drawCol(c);
+    for (let c = scrollC1; c <= lastC; c++) {
+      drawCol(c);
+      drawSticky(c);
+    }
     ctx.restore();
-    for (let c = 0; c < s.freeze.cols; c++) drawCol(c);
+    for (let c = 0; c < s.freeze.cols; c++) {
+      drawCol(c);
+      drawSticky(c);
+    }
     // Hidden column markers
     ctx.fillStyle = t.selBorder;
     for (const c of s.hiddenCols) {
@@ -1259,7 +1496,8 @@ export class GridView {
 
   private isFiltered(r: number): boolean {
     const f = this.sheet.filter;
-    return !!f && r > f.range.r1 && r <= f.range.r2;
+    if (f && r > f.range.r1 && r <= f.range.r2) return true;
+    return this.sheet.tables.some((t) => r > t.range.r1 && r <= t.range.r2 && Object.keys(t.filter).length > 0);
   }
 
   // ---------- copy marquee animation ----------
@@ -1330,6 +1568,10 @@ export class GridView {
         this.app.onSelectionChanged();
         return;
       case 'colHeader': {
+        if (hit.tableButton) {
+          this.app.tableButton(hit.tableButton, e.shiftKey, this.screenRect(hit.tableButton.rect));
+          return;
+        }
         if (hit.edge !== null) {
           const cols = sel.fullColumns().includes(hit.edge) ? sel.fullColumns() : [hit.edge];
           this.drag = { kind: 'resizeCol', col: hit.edge, startX: p.x, startW: this.cols.size(hit.edge) / this.zoom, cols };
@@ -1360,6 +1602,10 @@ export class GridView {
         break;
       }
       case 'cell': {
+        if (hit.tableButton) {
+          this.app.tableButton(hit.tableButton, e.shiftKey, this.screenRect(hit.tableButton.rect));
+          return;
+        }
         if (hit.filterButton) {
           const rect = this.cellRect(hit.row, hit.col);
           const host = this.el.getBoundingClientRect();
@@ -1534,7 +1780,7 @@ export class GridView {
         return;
       }
       if (!this.app.settings.bool('grid.doubleClickEdit')) return;
-      if (hit.filterButton) return;
+      if (hit.filterButton || hit.tableButton) return;
       this.app.startEdit({ mode: 'edit' });
     }
   }
@@ -1562,12 +1808,12 @@ export class GridView {
     const hit = this.hitTest(x, y);
     let cursor = 'cell';
     if (hit.kind === 'colHeader') {
-      cursor = hit.edge !== null ? 'col-resize' : 's-resize';
+      cursor = hit.tableButton ? 'pointer' : hit.edge !== null ? 'col-resize' : 's-resize';
     } else if (hit.kind === 'rowHeader') {
       cursor = hit.edge !== null ? 'row-resize' : 'e-resize';
     } else if (hit.kind === 'cell') {
       if (hit.fillHandle) cursor = 'crosshair';
-      else if (hit.filterButton) cursor = 'pointer';
+      else if (hit.filterButton || hit.tableButton) cursor = 'pointer';
       else if (this.app.isEditing && this.app.editor.canInsertRef()) cursor = 'copy';
     } else if (hit.kind === 'corner') cursor = 'default';
     this.scroller.style.cursor = cursor;
@@ -1588,7 +1834,12 @@ export class GridView {
       const text = v === null ? '' : formatValue(v, st.numFmt, 255).text;
       const font = this.font({ ...st, fontSize: st.fontSize ?? 11 }).replace(/[\d.]+px/, `${(((st.fontSize ?? 11) * 96) / 72).toFixed(2)}px`);
       const longest = text.split('\n').reduce((m, l) => Math.max(m, this.measure(font, l)), 0);
-      const filterPad = s.filter && r === s.filter.range.r1 && col >= s.filter.range.c1 && col <= s.filter.range.c2 ? 20 : 0;
+      const filterPad =
+        s.filter && r === s.filter.range.r1 && col >= s.filter.range.c1 && col <= s.filter.range.c2
+          ? 20
+          : s.tables.some((t) => t.range.r1 === r && col >= t.range.c1 && col <= t.range.c2)
+            ? this.filterButtonSize() * 2 + 10
+            : 0;
       max = Math.max(max, longest + PAD * 2 + 6 + filterPad);
     }
     return max;
