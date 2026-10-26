@@ -52,7 +52,8 @@
   - the sorted column is tinted, and a dot on its arrow says rows changed since sorting; click to sort again;
   - in a long table, the column names and arrows take the place of the column letters once you scroll past the header.
 - **Tables are easier than in Excel:**
-  - no dialog: Gridline works out whether the first row is a header (and fixes it in one click if it guessed wrong), splits merged cells, and widens columns whose names don't fit;
+  - no dialog, and **nothing in your cells changes**: values, formulas, formats, colors, column widths and rows stay exactly as they were. The table adds arrows to its first row and a thin outline (colors and banded rows are optional, in **Table options**);
+  - selecting whole columns, or an empty row or a title above your data, makes the table from just the data and its header row;
   - typing just below or right of a table makes it bigger; new rows get the formulas of calculated columns, and formulas that use a whole column (`=SUM(D2:D41)`) grow with it;
   - a total typed under a table stays outside it, so sorting never mixes it in;
   - each column has a **▾** menu (or **Alt+↓**) with sort choices, **Original order** and a filter; **Table options** sets the name, color and banded rows, or turns the table back into normal cells.

@@ -99,7 +99,8 @@ export interface FilterState {
 
 // ---- Tables ----
 
-export type TableColor = 'blue' | 'green' | 'orange' | 'gold' | 'gray';
+/** 'none': the cells keep their own look; the table only adds its buttons and an outline. */
+export type TableColor = 'none' | 'blue' | 'green' | 'orange' | 'gold' | 'gray';
 
 export interface TableSortKey {
   /** Absolute column index. */

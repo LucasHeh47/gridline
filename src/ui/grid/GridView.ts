@@ -331,12 +331,6 @@ export class GridView {
     return { sort, menu };
   }
 
-  /** Width a table header cell needs at 100% zoom: its name in bold, plus the buttons. */
-  tableHeaderWidth(name: string): number {
-    const font = `700 ${((11 * 96) / 72).toFixed(2)}px "Calibri", Calibri, "Segoe UI", Arial, sans-serif`;
-    return Math.ceil(this.measure(font, name) + PAD * 2 + 16 * 2 + 12);
-  }
-
   /** Width the header buttons take from a header cell's text. */
   tableButtonsWidth(cellW: number): number {
     const bs = this.filterButtonSize();
@@ -725,11 +719,11 @@ export class GridView {
       // Light fills (the cell's own or from conditional formatting) become dark tints in dark mode
       const cfFill = res?.style?.fill ?? res?.fill;
       const fillHex = cfFill ?? st.fill;
-      // Tables: a colored header row and banded rows, under any fill of the cells' own
+      // Tables with a color: a colored header row and banded rows, under any fill of the cells' own
       const tb = tableIn(r, c);
       const isHead = !!tb && r === tb.range.r1;
       const band = tb && !isHead ? (bands.get(`${tb.id}:${r}`) ?? r - tb.range.r1 - 1) : 0;
-      const tableFill = tb && !fillHex ? (isHead ? TABLE_COLORS[tb.color].header : tb.banded && band % 2 === 0 ? TABLE_COLORS[tb.color].band : undefined) : undefined;
+      const tableFill = tb && tb.color !== 'none' && !fillHex ? (isHead ? TABLE_COLORS[tb.color].header : tb.banded && band % 2 === 0 ? TABLE_COLORS[tb.color].band : undefined) : undefined;
       let bg = t.cellBg;
       if (fillHex || tableFill) {
         // In dark mode bands are a faint wash of the table's color
@@ -769,8 +763,8 @@ export class GridView {
         // Table functions (AMORTIZATION, STOCKHISTORY…) suggest formats for their columns
         const spillFmt = !st.numFmt && typeof v === 'number' ? this.app.doc.engine.spillFormatAt(s, r, c) : undefined;
         let jst = spillFmt ? { ...st, numFmt: spillFmt } : st;
-        // Header names are bold (white on the table's color), and leave room for the buttons
-        if (isHead) jst = { ...jst, bold: true, color: tableFill ? (st.color ?? '#ffffff') : st.color };
+        // On a colored header, names are bold and white; every header leaves room for the buttons
+        if (isHead && tableFill) jst = { ...jst, bold: true, color: st.color ?? '#ffffff' };
         const tw = isHead ? Math.max(8, w - this.tableButtonsWidth(w)) : w;
         jobs.push({ r, c, x, y, w: tw, h, st: jst, v, bg, merged, cfStyle: res?.style, hideValue: res?.hideValue, icon: res?.icon });
       }
@@ -844,13 +838,13 @@ export class GridView {
     for (const tb of tables) {
       const look = TABLE_COLORS[tb.color];
       const rr = this.rangeRect(tb.range);
-      ctx.strokeStyle = t.dark ? look.header : look.line;
+      ctx.strokeStyle = tb.color === 'none' ? (t.dark ? '#5d6575' : look.line) : t.dark ? look.header : look.line;
       ctx.lineWidth = 1;
       ctx.strokeRect(Math.round(rr.x) - 0.5, Math.round(rr.y) - 0.5, Math.round(rr.w), Math.round(rr.h));
       if (tb.range.r1 < r1 || tb.range.r1 > r2) continue;
       for (let c = Math.max(tb.range.c1, c1); c <= Math.min(tb.range.c2, c2); c++) {
         if (this.cols.size(c) === 0) continue;
-        this.drawTableButtons(tb, c, this.cellRect(tb.range.r1, c), headerBgs.get(`${tb.id}:${c}`) ?? TABLE_COLORS[tb.color].header);
+        this.drawTableButtons(tb, c, this.cellRect(tb.range.r1, c), headerBgs.get(`${tb.id}:${c}`) ?? (TABLE_COLORS[tb.color].header || t.cellBg));
       }
     }
 
@@ -1407,7 +1401,7 @@ export class GridView {
       const w = this.cols.size(c);
       if (w === 0) return;
       const x = this.colX(c);
-      const color = TABLE_COLORS[sticky.color].header;
+      const color = TABLE_COLORS[sticky.color].header || (t.dark ? '#2b3240' : '#e3e8f0');
       ctx.fillStyle = color;
       ctx.fillRect(x, 0, w - 1, hy);
       const name = sticky.columns[c - sticky.range.c1] ?? '';
@@ -1415,7 +1409,7 @@ export class GridView {
       ctx.beginPath();
       ctx.rect(x + 4, 0, Math.max(0, w - this.tableButtonsWidth(w) - 6), hy);
       ctx.clip();
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = luminance(color) < 0.45 ? '#ffffff' : t.headerText;
       ctx.font = `600 ${fontPx}px "Segoe UI", system-ui, sans-serif`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';

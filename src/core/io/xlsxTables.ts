@@ -12,7 +12,9 @@ const CT_TABLE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.ta
 const NS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
 /** Excel's built-in styles in each color (the accent colors of the default theme). */
+/** Excel's table style for each color ('' = no style: the cells keep their own formats). */
 const STYLE_FOR: Record<TableColor, string> = {
+  none: '',
   blue: 'TableStyleMedium2',
   orange: 'TableStyleMedium3',
   gray: 'TableStyleMedium4',
@@ -22,7 +24,8 @@ const STYLE_FOR: Record<TableColor, string> = {
 
 /** The nearest color for one of Excel's table styles (TableStyleLight9, TableStyleMedium2…). */
 export function colorForStyle(name: string | undefined): TableColor {
-  const m = /^TableStyle(?:Light|Medium|Dark)(\d+)$/.exec(name ?? '');
+  if (!name) return 'none';
+  const m = /^TableStyle(?:Light|Medium|Dark)(\d+)$/.exec(name);
   if (!m) return 'blue';
   // Each style family cycles through: none/black, then accents 1–6
   const accent = (parseInt(m[1], 10) - 1) % 7;
@@ -197,7 +200,7 @@ function tableXml(t: TableDef, id: number): string {
     `<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="${id}" name="${esc(t.name)}" displayName="${esc(t.name)}" ref="${ref}" totalsRowShown="0">` +
     `<autoFilter ref="${ref}">${filters}</autoFilter>${sort}` +
     `<tableColumns count="${t.columns.length}">${cols}</tableColumns>` +
-    `<tableStyleInfo name="${esc(style)}" showFirstColumn="0" showLastColumn="0" showRowStripes="${t.banded ? 1 : 0}" showColumnStripes="0"/>` +
+    `<tableStyleInfo${style ? ` name="${esc(style)}"` : ''} showFirstColumn="0" showLastColumn="0" showRowStripes="${t.banded ? 1 : 0}" showColumnStripes="0"/>` +
     `</table>`
   );
 }
