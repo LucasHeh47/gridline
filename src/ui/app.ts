@@ -233,6 +233,8 @@ export class App {
     this.bindDrop();
     platform.onRequestClose(() => this.requestClose());
     platform.onOpenPaths((paths) => void this.openPaths(paths));
+    // Baseline asked for a blank workbook or a preset while Gridline was already open
+    platform.onStart((s) => void (s.template ? this.newFromTemplate(s.template) : this.newWorkbook()));
     window.addEventListener('beforeunload', (e) => {
       if (!isDesktop && this.books.some((b) => b.doc.dirty)) e.preventDefault();
     });
