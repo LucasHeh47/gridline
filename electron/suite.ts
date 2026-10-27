@@ -1,13 +1,13 @@
-// The suite: Baseline (home), Gridline (spreadsheets), Pixelline (images) and Frameline (video). Each
-// app notes where it runs from in a small shared file, so the others can find and start it, installed
-// or portable. (This file is the same in all four apps.)
+// The suite: Baseline (home), Gridline (spreadsheets), Pixelline (images), Frameline (video) and
+// Beatline (music). Each app notes where it runs from in a small shared file, so the others can find
+// and start it, installed or portable. (This file is the same in all five apps.)
 import { app } from 'electron';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export type SuiteAppId = 'baseline' | 'gridline' | 'pixelline' | 'frameline';
+export type SuiteAppId = 'baseline' | 'gridline' | 'pixelline' | 'frameline' | 'beatline';
 
 export interface SuiteAppInfo {
   id: SuiteAppId;
@@ -25,6 +25,7 @@ export const SUITE: { id: SuiteAppId; name: string; description: string; repo: s
   { id: 'gridline', name: 'Gridline', description: 'Spreadsheets', repo: 'LucasHeh47/gridline' },
   { id: 'pixelline', name: 'Pixelline', description: 'Images and pixel art', repo: 'LucasHeh47/pixelline' },
   { id: 'frameline', name: 'Frameline', description: 'Video editing', repo: 'LucasHeh47/frameline' },
+  { id: 'beatline', name: 'Beatline', description: 'Music making and recording', repo: 'LucasHeh47/beatline' },
 ];
 
 interface Entry {
@@ -77,10 +78,10 @@ export async function suiteApps(extra: Partial<Record<SuiteAppId, string>> = {})
   });
 }
 
-/** Arguments one app may pass when starting another: files, and options like --new=16x16 or --fps=24. */
+/** Arguments one app may pass when starting another: files, and options like --new=16x16, --fps=24 or --bpm=90. */
 export function safeLaunchArgs(args: unknown): string[] {
   if (!Array.isArray(args)) return [];
-  return args.filter((a): a is string => typeof a === 'string' && a.length < 400 && (/^--(new|template|bg|name|fps)(=[^"\r\n]{0,120})?$/.test(a) || (path.isAbsolute(a) && existsSync(a))));
+  return args.filter((a): a is string => typeof a === 'string' && a.length < 400 && (/^--(new|template|bg|name|fps|bpm)(=[^"\r\n]{0,120})?$/.test(a) || (path.isAbsolute(a) && existsSync(a))));
 }
 
 /** Starts another app of the suite. Returns false when it isn't installed. */
