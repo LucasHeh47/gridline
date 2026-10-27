@@ -1,5 +1,5 @@
-// The app switcher (the dotted button in the title bar): Baseline, Gridline, Pixelline and Frameline, to
-// open one or start something new in it. Apps that aren't installed link to their download page.
+// The app switcher (the dotted button in the title bar): Baseline, Gridline, Pixelline, Frameline and
+// Beatline, to open one or start something new in it. Apps that aren't installed link to their download page.
 import * as L from 'lucide';
 import type { SuiteApp, SuiteAppId } from '../shared/api';
 import { h, icon } from './dom';
@@ -14,6 +14,7 @@ export const SUITE_LOOK: Record<SuiteAppId, { icon: L.IconNode; colors: [string,
   gridline: { icon: L.Grid2x2, colors: ['#4ea1ff', '#3fcf8e'], action: { label: 'New spreadsheet', args: ['--new'] } },
   pixelline: { icon: L.Shapes, colors: ['#a98bff', '#ff7ab6'], action: { label: 'New image', args: ['--new=32x32'] } },
   frameline: { icon: L.Clapperboard, colors: ['#ff5c6c', '#a98bff'], action: { label: 'New video', args: ['--new=1920x1080'] } },
+  beatline: { icon: L.AudioLines, colors: ['#2dd4bf', '#6366f1'], action: { label: 'New beat', args: ['--new'] } },
 };
 
 export function suiteMark(id: SuiteAppId, size = 16): HTMLElement {
@@ -27,7 +28,7 @@ let pop: Popover | null = null;
 
 export function suiteButton(): HTMLElement {
   const b = h('button', { class: 'btn suite-btn', 'aria-label': 'Apps', onclick: () => void openSuiteMenu(b) }, icon(L.Grip, 16));
-  tooltip(b, 'Your apps: Baseline, Gridline, Pixelline and Frameline');
+  tooltip(b, 'Your apps: Baseline, Gridline, Pixelline, Frameline and Beatline');
   return b;
 }
 
